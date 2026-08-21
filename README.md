@@ -1,5 +1,7 @@
 # 업체 대여 아이템 재고관리 보고서 자동화
 
+> 🌐 **배포 페이지: [https://aebonlee.github.io/hd-project03/](https://aebonlee.github.io/hd-project03/)** · 저장소: https://github.com/aebonlee/hd-project03
+
 > 기획: 공지은 · 생성형 AI 업무자동화 전문가과정 [1차수] 프로젝트
 
 여러 협력업체가 HD로부터 대여해 간 아이템(자산)의 **재고 실사 결과를 업체가 직접 웹에서 입력하고 확인서를 업로드**하면, HD 담당자에게 알림이 가고, 담당자가 검토·승인 후 **수량·금액 일치도 중심의 보고서를 자동 생성**하는 웹 포털입니다.
