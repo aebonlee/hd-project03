@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HD 대여 아이템 재고 실사 포털</title>
+  <link rel="stylesheet" href="css/style.css">
+  <!-- SheetJS: 엑셀 보고서 생성 / 기준 데이터 임포트 -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <header class="topbar no-print">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="brand-mark">HD</span>
+        <span class="brand-text">대여 아이템 재고 실사 포털</span>
+      </div>
+      <div class="topbar-right">
+        <span id="user-info" class="user-info"></span>
+        <button type="button" id="btn-logout" class="btn btn-ghost btn-sm" hidden>로그아웃</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- ==================== 로그인 ==================== -->
+    <section id="view-login" class="view">
+      <div class="login-wrap">
+        <div class="login-card">
+          <h1>로그인</h1>
+          <p class="muted">역할을 선택한 뒤 로그인해 주세요.</p>
+          <div class="tab-bar">
+            <button type="button" class="tab login-tab active" data-tab="vendor">업체 실무자</button>
+            <button type="button" class="tab login-tab" data-tab="hd">HD 담당자</button>
+          </div>
+
+          <div id="login-vendor-panel">
+            <form id="form-vendor-login" autocomplete="off">
+              <label for="login-bizno">사업자번호</label>
+              <input type="text" id="login-bizno" placeholder="123-45-67890" required>
+              <label for="login-password">비밀번호</label>
+              <input type="password" id="login-password" placeholder="초기 비밀번호" required>
+              <p id="login-vendor-error" class="error" role="alert"></p>
+              <button type="submit" class="btn btn-primary btn-block">업체 로그인</button>
+            </form>
+          </div>
+
+          <div id="login-hd-panel" hidden>
+            <form id="form-hd-login" autocomplete="off">
+              <label for="login-hd-password">담당자 비밀번호</label>
+              <input type="password" id="login-hd-password" placeholder="데모: hd1234" required>
+              <p id="login-hd-error" class="error" role="alert"></p>
+              <button type="submit" class="btn btn-primary btn-block">담당자 로그인</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="login-card">
+          <h2>데모 계정</h2>
+          <p class="muted">본 데모는 브라우저 localStorage에 저장된 샘플 데이터로 동작합니다.</p>
+          <div class="table-wrap">
+            <table class="table table-compact">
+              <thead>
+                <tr><th>업체명</th><th>사업자번호</th><th>비밀번호</th><th></th></tr>
+              </thead>
+              <tbody id="demo-accounts"></tbody>
+            </table>
+          </div>
+          <p class="muted">HD 담당자 비밀번호: <span class="mono">hd1234</span></p>
+          <button type="button" class="btn btn-ghost btn-sm btn-reset-demo">데모 데이터 초기화</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 업체 실무자 ==================== -->
+    <section id="view-vendor" class="view">
+      <div class="page-head">
+        <div>
+          <h1 id="vendor-title"></h1>
+          <p id="vendor-sub" class="muted"></p>
+        </div>
+        <span id="vendor-status-badge" class="badge"></span>
+      </div>
+
+      <div id="vendor-summary" class="stat-grid"></div>
+
+      <div class="panel">
+        <h2>대여 아이템 실사 입력</h2>
+        <p class="muted">각 아이템의 실제 보유 수량을 입력하세요. 장부 수량과 다르면 <strong>소명 사유 입력이 필수</strong>이며,
+          현재 존재하지 않는 아이템은 <strong>삭제(대여 종료) 요청</strong>을 선택해 주세요.</p>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>#</th><th>아이템 / 규격</th><th class="num">대여수량(장부)</th><th class="num">단가(원)</th>
+                <th class="num">금액(원)</th><th>대여일</th><th>실사 수량</th><th>판정</th><th>소명 / 사유</th><th>삭제 요청</th>
+              </tr>
+            </thead>
+            <tbody id="vendor-items"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>실사결과 확인서 첨부</h2>
+        <div id="vendor-file-row" class="file-row">
+          <input type="file" id="vendor-file" accept=".pdf,.jpg,.jpeg,.png">
+          <p id="vendor-file-error" class="error" role="alert"></p>
+        </div>
+        <div id="vendor-attachment-info"></div>
+      </div>
+
+      <div id="vendor-submit-area" class="panel submit-area">
+        <div id="vendor-submit-errors" class="error-box" hidden></div>
+        <button type="button" id="btn-vendor-submit" class="btn btn-primary btn-lg">실사 결과 제출</button>
+        <p class="muted">제출 시 HD 담당자에게 알림이 발송되며, 제출 후에는 수정할 수 없습니다.</p>
+      </div>
+      <p id="vendor-submitted-note" class="notice" hidden></p>
+    </section>
+
+    <!-- ==================== HD 담당자 ==================== -->
+    <section id="view-admin" class="view">
+      <div class="page-head">
+        <div>
+          <h1>HD 담당자 대시보드</h1>
+          <p class="muted" id="admin-round"></p>
+        </div>
+        <div class="btn-group">
+          <button type="button" id="btn-report" class="btn btn-primary">리포트 요청 (인쇄 보기)</button>
+          <button type="button" id="btn-report-excel" class="btn btn-secondary">엑셀 보고서 다운로드</button>
+          <button type="button" class="btn btn-ghost btn-reset-demo">데모 데이터 초기화</button>
+        </div>
+      </div>
+
+      <div class="tab-bar">
+        <button type="button" class="tab admin-tab active" data-tab="dashboard">제출 현황</button>
+        <button type="button" class="tab admin-tab" data-tab="notifications">알림 로그</button>
+        <button type="button" class="tab admin-tab" data-tab="master">기준 데이터 관리</button>
+      </div>
+
+      <div id="admin-dashboard">
+        <div id="dash-cards" class="stat-grid"></div>
+        <div class="panel">
+          <h2>업체별 제출 현황</h2>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>업체명</th><th>사업자번호</th><th>상태</th><th class="num">수량 일치도</th>
+                  <th class="num">금액 일치도</th><th class="num">불일치</th><th class="num">삭제요청</th><th>제출일시</th>
+                </tr>
+              </thead>
+              <tbody id="dash-rows"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel" id="audit-detail"></div>
+      </div>
+
+      <div id="admin-notifications" hidden>
+        <div class="panel">
+          <h2>알림 로그</h2>
+          <p class="muted">데모에서는 이메일 발송을 알림 로그로 대체합니다. 실제 이메일 연동 방법은 README를 참고하세요.</p>
+          <div id="notification-list"></div>
+        </div>
+      </div>
+
+      <div id="admin-master" hidden>
+        <div class="panel">
+          <h2>기준 데이터 관리</h2>
+          <p class="muted" id="master-summary"></p>
+          <div class="btn-group">
+            <button type="button" id="btn-master-export" class="btn btn-secondary">현재 데이터 엑셀 내보내기</button>
+            <label class="btn btn-secondary file-btn">
+              엑셀 업로드(임포트)
+              <input type="file" id="master-import" accept=".xlsx,.xls" hidden>
+            </label>
+          </div>
+          <p class="muted">임포트 양식: 내보내기 파일과 동일한 "업체" / "아이템" 시트 구조를 사용합니다.</p>
+          <div class="table-wrap">
+            <table class="table table-compact">
+              <thead>
+                <tr>
+                  <th>아이템ID</th><th>업체</th><th>아이템명</th><th>규격</th><th class="num">대여수량</th>
+                  <th class="num">단가(원)</th><th class="num">금액(원)</th><th>대여일</th><th>상태</th>
+                </tr>
+              </thead>
+              <tbody id="master-items"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 보고서 (인쇄용) ==================== -->
+    <section id="view-report" class="view">
+      <div class="page-head no-print">
+        <h1>재고 실사 결과 보고서</h1>
+        <div class="btn-group">
+          <button type="button" id="btn-print" class="btn btn-primary">PDF로 인쇄</button>
+          <button type="button" id="btn-report-excel-2" class="btn btn-secondary">엑셀 다운로드</button>
+          <button type="button" id="btn-report-back" class="btn btn-ghost">대시보드로 돌아가기</button>
+        </div>
+      </div>
+      <div id="report-body" class="report"></div>
+    </section>
+
+  </main>
+
+  <footer class="footer no-print">
+    <p>업체 대여 아이템 재고관리 보고서 자동화 · 데모 (기획: 공지은)</p>
+  </footer>
+
+  <script src="js/logic.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/report.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
