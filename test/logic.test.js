@@ -226,7 +226,48 @@ test('업체별 현황과 요약 집계가 맞다', function () {
   assert.strictEqual(rowC.mismatchCount, 1);
 });
 
-console.log('\n[10] 숫자 포맷');
+console.log('\n[10] 업체 임포트 분석');
+var existingVendors = [
+  { bizNo: '1234567890', name: '대한테크', password: '1234' },
+  { bizNo: '2345678901', name: '한빛물류', password: '1234' }
+];
+test('신규 / 덮어씀을 사업자번호 기준으로 분류한다', function () {
+  var r = Logic.analyzeVendorImport(existingVendors, [
+    { bizNo: '123-45-67890', name: '대한테크(수정)', password: 'abcd' }, // 기존 → 덮어씀
+    { bizNo: '9999999999', name: '신규상사', password: '5678' }          // 신규
+  ]);
+  assert.strictEqual(r.newCount, 1);
+  assert.strictEqual(r.overwriteCount, 1);
+  assert.strictEqual(r.duplicateInFileCount, 0);
+  assert.strictEqual(r.vendors.length, 2);
+});
+test('파일 내 사업자번호 중복은 마지막 행이 우선하고 건수를 집계한다', function () {
+  var r = Logic.analyzeVendorImport([], [
+    { bizNo: '1111111111', name: '첫번째', password: 'a' },
+    { bizNo: '111-11-11111', name: '두번째', password: 'b' }
+  ]);
+  assert.strictEqual(r.duplicateInFileCount, 1);
+  assert.strictEqual(r.vendors.length, 1);
+  assert.strictEqual(r.vendors[0].name, '두번째');
+});
+test('비밀번호 미입력 행은 기본값을 적용하고 건수를 보고한다', function () {
+  var r = Logic.analyzeVendorImport([], [
+    { bizNo: '1111111111', name: 'A', password: '' },
+    { bizNo: '2222222222', name: 'B', password: '  ' },
+    { bizNo: '3333333333', name: 'C', password: 'pw' }
+  ]);
+  assert.strictEqual(r.defaultPasswordCount, 2);
+  assert.strictEqual(r.vendors[0].password, Logic.DEFAULT_VENDOR_PASSWORD);
+  assert.strictEqual(r.vendors[1].password, Logic.DEFAULT_VENDOR_PASSWORD);
+  assert.strictEqual(r.vendors[2].password, 'pw');
+});
+test('원본 입력 배열은 변경하지 않는다', function () {
+  var rows = [{ bizNo: '1111111111', name: 'A', password: '' }];
+  Logic.analyzeVendorImport([], rows);
+  assert.strictEqual(rows[0].password, '');
+});
+
+console.log('\n[11] 숫자 포맷');
 test('천 단위 구분 포맷', function () {
   assert.strictEqual(Logic.formatNumber(1234567), '1,234,567');
   assert.strictEqual(Logic.formatNumber(null), '-');
