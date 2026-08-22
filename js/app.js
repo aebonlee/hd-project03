@@ -8,8 +8,19 @@
   var Store = global.Store;
   var Report = global.Report;
 
-  var HD_PASSWORD = 'hd1234'; // 데모용 담당자 비밀번호
-  var HD_EMAIL = 'hd-manager@hd.example.com';
+  // =================================================================
+  // ⚠ DEMO CONFIG — 데모 전용 하드코딩 인증 정보 (여기 한 곳에서만 관리)
+  //
+  // 아래 값은 과정 실습용 데모를 위한 것으로, 로그인 화면에도 그대로
+  // 노출됩니다. 실제 배포 전에는 반드시 Supabase Auth 등 실제 인증으로
+  // 교체해야 합니다. (README "Supabase 전환 가이드" 참조)
+  // =================================================================
+  var DEMO_CONFIG = {
+    HD_PASSWORD: 'hd1234',                      // 데모용 담당자 비밀번호
+    HD_EMAIL: 'hd-manager@hd.example.com'       // 데모용 담당자 알림 수신 주소
+  };
+  var HD_PASSWORD = DEMO_CONFIG.HD_PASSWORD;
+  var HD_EMAIL = DEMO_CONFIG.HD_EMAIL;
 
   var state = {
     role: null,          // 'vendor' | 'hd'
@@ -304,7 +315,7 @@
     if (att) {
       box.innerHTML = '<div class="file-chip">📎 ' + esc(att.fileName) +
         ' <span class="muted">(' + fmt(Math.round(att.size / 1024)) + ' KB)</span></div>' +
-        (att.preview ? '<img class="file-preview" src="' + att.preview + '" alt="확인서 미리보기">' : '');
+        (att.preview ? '<img class="file-preview" src="' + esc(att.preview) + '" alt="확인서 미리보기">' : '');
     } else {
       box.innerHTML = '<p class="muted">실사결과 확인서(PDF/JPG/PNG, 최대 10MB)를 첨부해 주세요. 제출 시 필수입니다.</p>';
     }
@@ -506,7 +517,7 @@
     html += '<div class="detail-foot">';
     html += att
       ? '<div class="file-chip">📎 첨부 확인서: ' + esc(att.fileName) + ' <span class="muted">(' + fmt(Math.round(att.size / 1024)) + ' KB)</span></div>' +
-        (att.preview ? '<img class="file-preview" src="' + att.preview + '" alt="확인서 미리보기">' : '')
+        (att.preview ? '<img class="file-preview" src="' + esc(att.preview) + '" alt="확인서 미리보기">' : '')
       : '<p class="muted">첨부 확인서 없음</p>';
     var pendingDeletes = lines.some(function (l) { return l.deleteRequested && l.deleteStatus === '대기'; });
     if (audit.status !== Logic.AUDIT_STATUS.APPROVED) {
@@ -583,7 +594,17 @@
       e.target.value = '';
       if (err) { alert(err.message); return; }
       Store.save();
-      alert('임포트 완료 — 업체 ' + counts.vendors + '건, 아이템 ' + counts.items + '건을 반영했습니다.');
+      var msg = '임포트 완료 — 업체 ' + counts.vendors + '건, 아이템 ' + counts.items + '건을 반영했습니다.';
+      var a = counts.vendorAnalysis;
+      if (a) {
+        msg += '\n\n업체 시트 상세: 신규 ' + a.newCount + '건 / 덮어씀 ' + a.overwriteCount +
+          '건 / 파일 내 중복 ' + a.duplicateInFileCount + '건';
+        if (a.defaultPasswordCount > 0) {
+          msg += '\n비밀번호 미입력 ' + a.defaultPasswordCount + '건에 기본값(' +
+            Logic.DEFAULT_VENDOR_PASSWORD + ')을 적용했습니다.';
+        }
+      }
+      alert(msg);
       renderMaster();
     });
   }

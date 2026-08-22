@@ -241,6 +241,68 @@
   }
 
   // ---------------------------------------------------------------
+  // 기준 데이터 임포트 분석
+  // ---------------------------------------------------------------
+
+  /** 업체 임포트 시 비밀번호 미입력 행에 적용되는 기본값 */
+  var DEFAULT_VENDOR_PASSWORD = '1234';
+
+  /**
+   * 업체 임포트 사전 분석.
+   * 규칙:
+   *  1) 파일 내 동일 사업자번호 중복 → 마지막 행이 우선, 중복 건수 집계
+   *  2) 기존 데이터와 사업자번호가 겹치면 "덮어씀", 아니면 "신규"로 분류
+   *  3) 비밀번호 미입력 행은 기본값('1234')을 적용하되 건수를 집계해 보고
+   * @param {Array} existingVendors  현재 저장된 업체 목록
+   * @param {Array} importedRows  파일에서 파싱한 업체 목록 (password는 빈 문자열 가능)
+   * @returns {{vendors: Array, newCount: number, overwriteCount: number,
+   *            duplicateInFileCount: number, defaultPasswordCount: number}}
+   */
+  function analyzeVendorImport(existingVendors, importedRows) {
+    var seen = {};
+    var deduped = [];
+    var duplicateInFileCount = 0;
+    (importedRows || []).forEach(function (row) {
+      var v = Object.assign({}, row);
+      var key = normalizeBizNo(v.bizNo);
+      if (seen[key] !== undefined) {
+        duplicateInFileCount++;
+        deduped[seen[key]] = v; // 파일 내 중복 시 마지막 행 우선
+      } else {
+        seen[key] = deduped.length;
+        deduped.push(v);
+      }
+    });
+
+    var defaultPasswordCount = 0;
+    deduped.forEach(function (v) {
+      if (!String(v.password == null ? '' : v.password).trim()) {
+        v.password = DEFAULT_VENDOR_PASSWORD;
+        defaultPasswordCount++;
+      }
+    });
+
+    var existingKeys = {};
+    (existingVendors || []).forEach(function (v) {
+      existingKeys[normalizeBizNo(v.bizNo)] = true;
+    });
+    var newCount = 0;
+    var overwriteCount = 0;
+    deduped.forEach(function (v) {
+      if (existingKeys[normalizeBizNo(v.bizNo)]) overwriteCount++;
+      else newCount++;
+    });
+
+    return {
+      vendors: deduped,
+      newCount: newCount,
+      overwriteCount: overwriteCount,
+      duplicateInFileCount: duplicateInFileCount,
+      defaultPasswordCount: defaultPasswordCount
+    };
+  }
+
+  // ---------------------------------------------------------------
   // 제출 현황 (담당자 대시보드)
   // ---------------------------------------------------------------
 
@@ -327,6 +389,8 @@
     computeLine: computeLine,
     validateSubmission: validateSubmission,
     validateFile: validateFile,
+    DEFAULT_VENDOR_PASSWORD: DEFAULT_VENDOR_PASSWORD,
+    analyzeVendorImport: analyzeVendorImport,
     computeMatchRates: computeMatchRates,
     vendorSubmissionStatus: vendorSubmissionStatus,
     buildDashboard: buildDashboard,
