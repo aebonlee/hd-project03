@@ -202,6 +202,7 @@
     badge.className = 'badge ' + (audit.status === Logic.AUDIT_STATUS.APPROVED ? 'badge-approved' :
       submitted ? 'badge-submitted' : 'badge-draft');
 
+    renderDueBanner(db, audit, submitted);
     renderVendorTable(db, audit, lines, submitted);
     renderVendorSummary(lines);
     renderVendorAttachment(db, audit, submitted);
@@ -213,6 +214,51 @@
         ? '이번 회차 실사가 승인 완료되었습니다. 수고하셨습니다.'
         : '이번 회차 실사 결과가 제출되었습니다. HD 담당자 검토 후 승인됩니다.';
     }
+  }
+
+  /**
+   * 등록 마감 안내 / 지각 헤드라인.
+   *
+   * 요청 원문: "기 일자를 넘기는 업체는 접속시 상단에 빨간 헤드라인
+   * (혹은 노란 헤드라인에 빨간색 글씨)으로 지각일수가 표시되면 좋겠습니다"
+   *  → 기본은 노란 바탕 + 빨간 글씨, 7일 넘게 늦으면 빨간 바탕으로 한 단계 올린다.
+   */
+  function renderDueBanner(db, audit, submitted) {
+    var el = $('#vendor-due-banner');
+    if (!el) return;
+
+    var plan = Store.roundPlan();
+    var o = Logic.computeOverdue(plan.dueDate, new Date(), submitted, audit.submittedAt);
+
+    if (o.state === '마감없음') { el.className = 'due-banner hidden'; el.innerHTML = ''; return; }
+
+    var cls, html;
+    if (o.state === '지각') {
+      cls = o.days >= 7 ? 'is-late-hard' : 'is-late';
+      html = '<strong>등록 기한이 지났습니다.</strong> '
+        + '<span class="days">' + o.days + '일 지각</span><br>'
+        + '등록 마감일은 <strong>' + esc(o.dueDate) + '</strong>이었습니다. '
+        + '실사 결과와 결과확인서를 지금 등록해 주세요.';
+    } else if (o.state === '임박') {
+      cls = 'is-soon';
+      html = o.days === 0
+        ? '<strong>오늘이 등록 마감일입니다.</strong> (' + esc(o.dueDate) + ') 오늘 안에 등록해 주세요.'
+        : '<strong>등록 마감이 ' + o.days + '일 남았습니다.</strong> (마감 ' + esc(o.dueDate) + ')';
+    } else if (o.state === '여유') {
+      cls = 'is-ok';
+      html = '등록 마감일은 <strong>' + esc(o.dueDate) + '</strong>입니다. (' + o.days + '일 남음)';
+    } else if (o.state === '지각제출') {
+      // 이미 냈어도 며칠 늦었는지는 남긴다 — 다음 회차 독려의 근거가 된다
+      cls = 'is-done-late';
+      html = '제출이 완료되었습니다. 다만 마감일(' + esc(o.dueDate) + ')보다 '
+        + '<strong>' + o.days + '일 늦은 제출</strong>이었습니다.';
+    } else {
+      cls = 'is-done';
+      html = '기한 내 제출이 완료되었습니다. (마감 ' + esc(o.dueDate) + ')';
+    }
+
+    el.className = 'due-banner ' + cls;
+    el.innerHTML = html;
   }
 
   function renderVendorTable(db, audit, lines, submitted) {
@@ -386,9 +432,21 @@
       ')가 ' + db.round + ' 실사 결과를 제출했습니다. (불일치 ' + rates.mismatchCount +
       '건, 삭제 요청 ' + rates.deleteCount + '건)');
 
+    // 지각 제출이면 그 사실을 알림에 남긴다 — 다음 회차 독려의 근거가 된다
+    var plan = Store.roundPlan();
+    var od = Logic.computeOverdue(plan.dueDate, new Date(), true, audit.submittedAt);
+    if (od.state === '지각제출') {
+      Store.notify(HD_EMAIL, '[지각 제출] ' + state.vendor.name + ' — 마감일(' + od.dueDate +
+        ')보다 ' + od.days + '일 늦게 제출했습니다.');
+    }
+
+    // 전 업체가 등록을 마쳤으면 담당자에게 통지 (회차당 1회)
+    var allDone = notifyIfAllSubmitted(db);
+
     state.pendingFile = null;
     renderVendorView();
-    alert('실사 결과가 제출되었습니다. HD 담당자에게 알림이 발송되었습니다.');
+    alert('실사 결과가 제출되었습니다. HD 담당자에게 알림이 발송되었습니다.'
+      + (allDone ? '\n\n이번 회차 전 업체 등록이 완료되어 담당자에게 완료 통지가 함께 발송되었습니다.' : ''));
   }
 
   // ---------------------------------------------------------------
@@ -401,6 +459,7 @@
       b.classList.toggle('active', b.getAttribute('data-tab') === tab);
     });
     $('#admin-dashboard').hidden = tab !== 'dashboard';
+    $('#admin-round-panel').hidden = tab !== 'round';
     $('#admin-notifications').hidden = tab !== 'notifications';
     $('#admin-master').hidden = tab !== 'master';
     renderAdminView();
@@ -408,6 +467,7 @@
 
   function renderAdminView() {
     if (state.adminTab === 'dashboard') renderDashboard();
+    else if (state.adminTab === 'round') renderRoundPanel();
     else if (state.adminTab === 'notifications') renderNotifications();
     else renderMaster();
   }
@@ -452,6 +512,46 @@
     renderAuditDetail(db);
   }
 
+  /**
+   * 재고보정 확정 칸.
+   *
+   * 요청 원문: "재고보정에 O표시가 있는경우 결과자료에 별도로 취합 되어야 합니다"
+   * 총괄표 하단 「보정요청 리스트」로 가는 값이라, 담당자가 O/X 를 확정하고
+   * 귀책(HCE/협력업체)까지 골라야 결과 추출이 완성된다.
+   */
+  function correctionCell(l, i, audit) {
+    if (!Logic.isCorrectionCandidate(l)) return '<span class="muted">-</span>';
+
+    var locked = audit.status === Logic.AUDIT_STATUS.APPROVED;
+    var cur = String(l.correction || '');
+    var amt = Logic.correctionAmount(l);
+
+    if (locked) {
+      return cur.toUpperCase() === 'O'
+        ? '<span class="badge badge-mismatch">O</span><div class="muted">' +
+          fmt(amt) + '원 · ' + esc(l.fault || '-') + ' · ' + esc(l.action || '') + '</div>'
+        : '<span class="muted">' + (cur ? esc(cur) : '판단 없음') + '</span>';
+    }
+
+    var cls = cur === '' ? 'is-pending' : 'is-set';
+    var html = '<div class="corr-cell">' +
+      '<select class="sel-corr ' + cls + '" data-idx="' + i + '">' +
+      '<option value=""' + (cur === '' ? ' selected' : '') + '>판단 대기</option>' +
+      '<option value="O"' + (cur === 'O' ? ' selected' : '') + '>O (보정)</option>' +
+      '<option value="X"' + (cur === 'X' ? ' selected' : '') + '>X (보정 안 함)</option>' +
+      '</select>';
+
+    if (cur.toUpperCase() === 'O') {
+      html += '<select class="sel-fault" data-idx="' + i + '">' +
+        '<option value=""' + (!l.fault ? ' selected' : '') + '>귀책 선택</option>' +
+        '<option value="HCE"' + (l.fault === 'HCE' ? ' selected' : '') + '>HCE</option>' +
+        '<option value="협력업체"' + (l.fault === '협력업체' ? ' selected' : '') + '>협력업체</option>' +
+        '</select>' +
+        '<span class="muted">' + fmt(amt) + '원 · ' + esc(l.action || Logic.ACTION_CORRECTION) + '</span>';
+    }
+    return html + '</div>';
+  }
+
   function renderAuditDetail(db) {
     var panel = $('#audit-detail');
     var bizNo = state.selectedAuditBizNo;
@@ -487,8 +587,8 @@
       ' · 금액 차이 합계 <strong>' + fmt(rates.totalDiffAmount) + '원</strong></p>';
 
     html += '<div class="table-wrap"><table class="table"><thead><tr>' +
-      '<th>아이템</th><th class="num">장부</th><th class="num">실사</th><th class="num">차이</th>' +
-      '<th class="num">금액차이(원)</th><th>판정</th><th>소명/사유</th><th>삭제 요청</th></tr></thead><tbody>' +
+      '<th>아이템</th><th class="num">전산재고</th><th class="num">실물재고</th><th class="num">차이</th>' +
+      '<th class="num">금액차이(원)</th><th>판정</th><th>재고보정</th><th>소명/사유</th><th>삭제 요청</th></tr></thead><tbody>' +
       lines.map(function (l, i) {
         var judged = l.deleteRequested ? '<span class="badge badge-delete">삭제요청</span>'
           : l.diff === 0 ? '<span class="badge badge-match">일치</span>'
@@ -510,6 +610,7 @@
           '<td class="num">' + (l.diff > 0 ? '+' : '') + fmt(l.diff) + '</td>' +
           '<td class="num">' + fmt(l.amountDiff) + '</td>' +
           '<td>' + judged + '</td>' +
+          '<td>' + correctionCell(l, i, audit) + '</td>' +
           '<td class="reason-text">' + esc(l.reason || '-') + '</td>' +
           '<td>' + delCell + '</td></tr>';
       }).join('') + '</tbody></table></div>';
@@ -527,6 +628,25 @@
     }
     html += '</div>';
     panel.innerHTML = html;
+
+    $all('#audit-detail .sel-corr').forEach(function (sel) {
+      sel.addEventListener('change', function () {
+        var l = lines[Number(sel.getAttribute('data-idx'))];
+        Store.setCorrection(audit.id, l.itemId, {
+          correction: sel.value,
+          // O 로 바꾸면 조치사항은 총괄표에 쓰이는 코드로 기본값을 채운다
+          action: sel.value.toUpperCase() === 'O' ? (l.action || Logic.ACTION_CORRECTION) : ''
+        });
+        renderDashboard();
+      });
+    });
+    $all('#audit-detail .sel-fault').forEach(function (sel) {
+      sel.addEventListener('change', function () {
+        var l = lines[Number(sel.getAttribute('data-idx'))];
+        Store.setCorrection(audit.id, l.itemId, { fault: sel.value });
+        renderDashboard();
+      });
+    });
 
     $all('#audit-detail .btn-del-approve').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -559,6 +679,167 @@
         renderDashboard();
       });
     }
+  }
+
+  // ---------------------------------------------------------------
+  // 회차 관리 (2026-08-24 보완)
+  // ---------------------------------------------------------------
+
+  function renderRoundPanel() {
+    var db = Store.load();
+    var plan = Store.roundPlan();
+
+    $('#round-book-base').value = plan.bookBase || '';
+    $('#round-due-date').value = plan.dueDate || '';
+    $('#round-book-updated').textContent = plan.bookUpdatedAt
+      ? '마지막 전산재고 갱신: ' + String(plan.bookUpdatedAt).replace('T', ' ')
+      : '아직 전산재고를 올린 적이 없습니다.';
+    $('#round-request-result').textContent = plan.requestedAt
+      ? '마지막 등록요청 발송: ' + String(plan.requestedAt).replace('T', ' ')
+      : '아직 등록요청을 보낸 적이 없습니다.';
+
+    // 업체별 마감 대비 상태
+    $('#round-vendor-rows').innerHTML = db.vendors.map(function (v) {
+      var status = Logic.vendorSubmissionStatus(db.audits, db.auditLines, v.bizNo, db.round);
+      var audit = db.audits.find(function (a) {
+        return Logic.normalizeBizNo(a.bizNo) === Logic.normalizeBizNo(v.bizNo) && a.round === db.round;
+      });
+      var o = Logic.computeOverdue(plan.dueDate, new Date(), status !== '미제출',
+        audit && audit.submittedAt);
+      var label, cls;
+      if (o.state === '지각')          { label = o.days + '일 지각'; cls = 'badge-late'; }
+      else if (o.state === '지각제출') { label = o.days + '일 늦게 제출'; cls = 'badge-late-soft'; }
+      else if (o.state === '임박')     { label = o.days === 0 ? '오늘 마감' : o.days + '일 남음'; cls = 'badge-draft'; }
+      else if (o.state === '여유')     { label = o.days + '일 남음'; cls = 'badge-draft'; }
+      else if (o.state === '기한내제출') { label = '기한 내 제출'; cls = 'badge-approved'; }
+      else                              { label = '마감 미설정'; cls = 'badge-draft'; }
+
+      return '<tr><td>' + esc(v.name) + '</td><td>' + esc(v.manager || '-') + '</td>' +
+        '<td>' + esc(v.phone || '-') + '</td>' +
+        '<td>' + statusBadge(status) + '</td>' +
+        '<td><span class="badge ' + cls + '">' + esc(label) + '</span></td></tr>';
+    }).join('');
+
+    renderPreflight(db);
+  }
+
+  /** 결과 추출 전 점검 — 확인서 누락 / 재고보정 판단 대기 / 불일치 */
+  function renderPreflight(db) {
+    var pf = Logic.buildPreflight(db.vendors, db.audits, db.auditLines, db.attachments, db.round);
+
+    function line(label, arr, render) {
+      var ok = arr.length === 0;
+      return '<p class="pf-line"><span class="' + (ok ? 'ok' : 'bad') + '">' +
+        (ok ? '이상 없음' : arr.length + '건') + '</span> · ' + esc(label) +
+        (ok ? '' : ' — ' + render(arr)) + '</p>';
+    }
+
+    var html = '';
+    html += line('미제출 업체', pf.notSubmitted, function (a) {
+      return esc(a.join(', '));
+    });
+    html += line('결과확인서 누락', pf.missingCert, function (a) {
+      return esc(a.join(', '));
+    });
+    html += line('재고보정 판단 대기', pf.pendingCorrection, function (a) {
+      return esc(a.map(function (x) { return x.vendorName + ' ' + x.itemName; }).join(', '));
+    });
+    html += '<p class="pf-line"><span class="' + (pf.mismatch.length ? 'bad' : 'ok') + '">' +
+      (pf.mismatch.length ? pf.mismatch.length + '건' : '이상 없음') + '</span> · 불일치' +
+      (pf.mismatch.length ? ' — ' + esc(pf.mismatch.map(function (x) {
+        return x.vendorName + ' ' + x.itemName + '(' + (x.diff > 0 ? '+' : '') + x.diff + ')';
+      }).join(', ')) : '') + '</p>';
+
+    html += pf.ready
+      ? '<div class="pf-ready">결과 추출 준비가 되었습니다. 상단 [엑셀 보고서 다운로드]로 총괄표를 받으세요.</div>'
+      : '<div class="pf-notready">위 항목을 처리한 뒤 결과를 추출하세요. ' +
+        '불일치는 남아 있어도 됩니다 — 재고보정 O/X 판단만 끝나면 총괄표 하단 보정요청 리스트로 취합됩니다.</div>';
+
+    $('#preflight-body').innerHTML = html;
+  }
+
+  /** 전산재고 엑셀 업로드 — 제출한 업체는 건드리지 않는다 */
+  function handleBookStockUpload(e) {
+    var file = e.target.files && e.target.files[0];
+    if (!file) return;
+    var db = Store.load();
+
+    // 이미 제출한 업체의 장부수량을 바꾸면 그 업체가 낸 실사 결과의 근거가 사라진다
+    var locked = db.vendors.filter(function (v) {
+      return Logic.vendorSubmissionStatus(db.audits, db.auditLines, v.bizNo, db.round) !== '미제출';
+    }).map(function (v) { return v.bizNo; });
+
+    Report.readBookStock(file, function (err, rows) {
+      e.target.value = '';
+      if (err) { $('#round-book-result').textContent = '읽기 실패: ' + err.message; return; }
+      if (!rows.length) {
+        $('#round-book-result').textContent =
+          '읽을 행이 없습니다. 품번(또는 아이템ID)과 장부수량 열이 있는지 확인해 주세요.';
+        return;
+      }
+
+      var r = Store.updateBookStock(rows, locked);
+      Store.setRoundPlan({
+        bookBase: $('#round-book-base').value || Store.roundPlan().bookBase,
+        bookUpdatedAt: new Date().toISOString().slice(0, 19)
+      });
+      $('#round-book-result').textContent =
+        '갱신 ' + r.updated + '건' +
+        (r.skippedLocked ? ' · 제출 완료 업체라 건너뜀 ' + r.skippedLocked + '건' : '') +
+        (r.notFound.length ? ' · 찾지 못한 품번 ' + r.notFound.length + '건(' +
+          r.notFound.slice(0, 5).join(', ') + (r.notFound.length > 5 ? ' …' : '') + ')' : '');
+      renderRoundPanel();
+    });
+  }
+
+  /** 전 업체에 등록요청 발송 */
+  function sendRegistrationRequest() {
+    var db = Store.load();
+    var due = $('#round-due-date').value;
+    if (!due) { alert('먼저 등록 마감일을 정해 주세요.'); return; }
+
+    Store.setRoundPlan({ dueDate: due, requestedAt: new Date().toISOString().slice(0, 19) });
+
+    var targets = db.vendors.filter(function (v) {
+      return Logic.vendorSubmissionStatus(db.audits, db.auditLines, v.bizNo, db.round) === '미제출';
+    });
+    if (!targets.length) {
+      alert('미제출 업체가 없습니다. 전 업체가 이미 등록을 마쳤습니다.');
+      renderRoundPanel();
+      return;
+    }
+    if (!confirm('미제출 업체 ' + targets.length + '곳에 등록요청을 보냅니다.\n마감일: ' + due)) return;
+
+    targets.forEach(function (v) {
+      Store.notify(v.email,
+        '[실사 등록 요청] ' + db.round + ' 재고 실사 결과를 ' + due + '까지 등록해 주세요. ' +
+        '기한을 넘기면 접속 화면 상단에 지각일수가 표시됩니다.');
+    });
+    $('#round-request-result').textContent =
+      '방금 ' + targets.length + '곳에 등록요청을 보냈습니다. (마감 ' + due + ')';
+    renderRoundPanel();
+  }
+
+  /**
+   * 전 업체 등록 완료 시 담당자에게 통지.
+   *
+   * 요청 원문: "관리자는 업체들이 모두 등록 완료되었음을 사이트가 메일 혹은 문자를 보내
+   * 공유받고 알 수 있어야 하고"
+   * 한 회차에 한 번만 보낸다 — 이후 승인·수정 때마다 다시 나가면 알림이 무의미해진다.
+   */
+  function notifyIfAllSubmitted(db) {
+    var plan = Store.roundPlan();
+    if (plan.completedNotifiedAt) return false;
+    if (!Logic.allSubmitted(db.vendors, db.audits, db.auditLines, db.round)) return false;
+
+    var pf = Logic.buildPreflight(db.vendors, db.audits, db.auditLines, db.attachments, db.round);
+    Store.notify(HD_EMAIL,
+      '[전 업체 등록 완료] ' + db.round + ' 재고 실사에 대해 ' + db.vendors.length +
+      '개 업체가 모두 등록을 마쳤습니다. ' +
+      '확인서 누락 ' + pf.missingCert.length + '건 · 불일치 ' + pf.mismatch.length + '건 · ' +
+      '재고보정 판단 대기 ' + pf.pendingCorrection.length + '건. 결과 추출 전 점검을 확인해 주세요.');
+    Store.setRoundPlan({ completedNotifiedAt: new Date().toISOString().slice(0, 19) });
+    return true;
   }
 
   function renderNotifications() {
@@ -702,6 +983,17 @@
     $all('.admin-tab').forEach(function (b) {
       b.addEventListener('click', function () { setAdminTab(b.getAttribute('data-tab')); });
     });
+
+    // 회차 관리 (2026-08-24 보완)
+    $('#round-book-file').addEventListener('change', handleBookStockUpload);
+    $('#btn-save-due').addEventListener('click', function () {
+      var due = $('#round-due-date').value;
+      if (!due) { alert('마감일을 골라 주세요.'); return; }
+      Store.setRoundPlan({ dueDate: due, bookBase: $('#round-book-base').value || undefined });
+      alert('등록 마감일을 ' + due + '로 저장했습니다.');
+      renderRoundPanel();
+    });
+    $('#btn-send-request').addEventListener('click', sendRegistrationRequest);
     $('#btn-report').addEventListener('click', function () {
       renderPrintReport();
     });

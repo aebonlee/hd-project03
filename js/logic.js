@@ -362,6 +362,314 @@
   }
 
   // ---------------------------------------------------------------
+  // 회차 마감·지각 (2026-08-24 보완)
+  // ---------------------------------------------------------------
+
+  /** 'YYYY-MM-DD' 또는 Date → 그 날 23:59:59 의 타임스탬프. 마감일은 그날까지를 뜻한다. */
+  function endOfDay(dateLike) {
+    if (!dateLike) return null;
+    var d = dateLike instanceof Date ? new Date(dateLike.getTime()) : new Date(String(dateLike) + 'T00:00:00');
+    if (isNaN(d.getTime())) return null;
+    d.setHours(23, 59, 59, 999);
+    return d.getTime();
+  }
+
+  /** 날짜만 남긴 자정 타임스탬프 — 지각 "일수"는 시각이 아니라 날짜 차이로 센다. */
+  function startOfDay(dateLike) {
+    var d = dateLike instanceof Date ? new Date(dateLike.getTime()) : new Date(dateLike);
+    if (isNaN(d.getTime())) return null;
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+
+  var DAY_MS = 24 * 60 * 60 * 1000;
+
+  /**
+   * 업체의 등록 지각 여부를 판정한다.
+   *
+   * 지각일수는 시각 차이가 아니라 **날짜 차이**로 센다. 마감 다음 날 0시 1분이든
+   * 23시 59분이든 똑같이 "1일 지각"이어야 화면 문구가 상식과 맞는다.
+   *
+   * @param {string|Date|null} dueDate  마감일 (없으면 마감 미설정)
+   * @param {string|Date} now  기준 시각
+   * @param {boolean} submitted  이미 제출했는지
+   * @param {string|Date|null} [submittedAt]  제출 시각 — 제출했다면 이 시점으로 지각을 판정한다
+   * @returns {{state:'마감없음'|'여유'|'임박'|'지각'|'지각제출'|'기한내제출', days:number, dueDate:string|null}}
+   */
+  function computeOverdue(dueDate, now, submitted, submittedAt) {
+    var due = endOfDay(dueDate);
+    if (due === null) return { state: '마감없음', days: 0, dueDate: null };
+
+    var dueDay = startOfDay(new Date(due));
+    var iso = new Date(due);
+    var dueStr = iso.getFullYear() + '-'
+      + String(iso.getMonth() + 1).padStart(2, '0') + '-'
+      + String(iso.getDate()).padStart(2, '0');
+
+    if (submitted) {
+      // 제출 시각이 없으면 지각으로 몰지 않는다 — 옛 데이터에는 시각이 없을 수 있다.
+      var at = submittedAt ? startOfDay(submittedAt) : null;
+      if (at === null || at <= dueDay) return { state: '기한내제출', days: 0, dueDate: dueStr };
+      return { state: '지각제출', days: Math.round((at - dueDay) / DAY_MS), dueDate: dueStr };
+    }
+
+    var today = startOfDay(now);
+    if (today === null) return { state: '마감없음', days: 0, dueDate: dueStr };
+
+    if (today > dueDay) {
+      return { state: '지각', days: Math.round((today - dueDay) / DAY_MS), dueDate: dueStr };
+    }
+    var left = Math.round((dueDay - today) / DAY_MS);
+    return { state: left <= 3 ? '임박' : '여유', days: left, dueDate: dueStr };
+  }
+
+  /** 회차의 모든 업체가 제출(또는 승인)을 마쳤는가. */
+  function allSubmitted(vendors, audits, auditLines, round) {
+    var list = vendors || [];
+    if (list.length === 0) return false;
+    return list.every(function (v) {
+      return vendorSubmissionStatus(audits, auditLines, v.bizNo, round) !== '미제출';
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // 재고보정 (2026-08-24 보완 — 총괄표 하단 "보정요청 리스트")
+  // ---------------------------------------------------------------
+
+  /** 귀책 구분 — 총괄표 K열 */
+  var FAULT = { HCE: 'HCE', VENDOR: '협력업체' };
+  /** 조치사항 코드 — 총괄표 L열. 실제 양식에 쓰인 값 */
+  var ACTION_CORRECTION = 'Z05';
+
+  /**
+   * 이 라인이 재고보정 대상인가.
+   *
+   * 총괄표에서 재고보정 O가 붙은 두 건은 모두 "전산재고 ≠ 실물재고"이면서
+   * 대여 종료(삭제) 요청이 아닌 건이었다. 삭제 요청은 별도 승인 흐름을 타므로
+   * 보정요청 리스트에 넣지 않는다.
+   */
+  function isCorrectionCandidate(line) {
+    if (!line || line.deleteRequested) return false;
+    var diff = Number(line.diff);
+    return line.diff !== null && line.diff !== undefined && !isNaN(diff) && diff !== 0;
+  }
+
+  /** 보정금액 = 차이 × 단가. 부족이면 음수가 된다(총괄표와 같은 부호). */
+  function correctionAmount(line) {
+    if (!isCorrectionCandidate(line)) return 0;
+    return (Number(line.diff) || 0) * (Number(line.unitPrice) || 0);
+  }
+
+  /**
+   * 총괄표 하단 "보정요청 리스트"를 만든다.
+   * 업체별로 묶고 소계를 붙인다 — 실제 양식이 그렇게 되어 있다.
+   *
+   * @param {Array} vendors
+   * @param {Array} lines  재고보정이 확정된(correction === 'O') 라인만 들어온다
+   * @returns {{rows: Array, subtotals: Array, totalQty: number, totalAmount: number}}
+   */
+  function buildCorrectionList(vendors, lines) {
+    var nameOf = {};
+    (vendors || []).forEach(function (v) { nameOf[normalizeBizNo(v.bizNo)] = v.name; });
+
+    var picked = (lines || []).filter(function (l) {
+      return String(l.correction || '').trim().toUpperCase() === 'O';
+    });
+
+    var byVendor = {};
+    picked.forEach(function (l) {
+      var key = normalizeBizNo(l.bizNo);
+      if (!byVendor[key]) byVendor[key] = [];
+      byVendor[key].push(l);
+    });
+
+    var rows = [];
+    var subtotals = [];
+    var totalQty = 0;
+    var totalAmount = 0;
+
+    Object.keys(byVendor).sort().forEach(function (key) {
+      var vname = nameOf[key] || key;
+      var sumQty = 0;
+      var sumAmt = 0;
+      byVendor[key].forEach(function (l) {
+        var qty = Number(l.diff) || 0;
+        var amt = correctionAmount(l);
+        sumQty += qty;
+        sumAmt += amt;
+        rows.push({
+          bizNo: l.bizNo,
+          vendorName: vname,
+          partNo: l.partNo || '',
+          itemName: l.itemName || '',
+          correctionQty: qty,
+          correctionAmount: amt,
+          fault: l.fault || '',
+          action: l.action || ACTION_CORRECTION,
+          reason: l.reason || ''
+        });
+      });
+      subtotals.push({ vendorName: vname + ' 소계', correctionQty: sumQty, correctionAmount: sumAmt });
+      totalQty += sumQty;
+      totalAmount += sumAmt;
+    });
+
+    return { rows: rows, subtotals: subtotals, totalQty: totalQty, totalAmount: totalAmount };
+  }
+
+  // ---------------------------------------------------------------
+  // 총괄표 상단 집계 (2026-08-24 보완)
+  // ---------------------------------------------------------------
+
+  /**
+   * 총괄표 상단 한 행을 만든다.
+   *
+   * 실제 양식의 열 의미를 원본 파일로 실측해 맞췄다.
+   *  - C·D(전월 마감 재고): 품목수 = 라인 수, 금액 = 전산재고 기준 금액
+   *  - E·F(실사 대상):     품목수 = **실물재고 수량 합**, 금액 = 실물재고 기준 금액
+   *    (E열 머리글이 "품목수"지만 라인 수가 아니라 수량 합이다. 원본 10개 업체 전부에서 일치했다)
+   *  - H~K(품목기준): 일치 = 차이 0인 라인의 실물 수량 합, 과잉 = +차이 합, 부족 = -차이 합
+   *  - L~P(금액기준): 같은 방식의 금액판. NET = 과잉 − 부족
+   *
+   * @param {Array} lines  이 업체의 실사 라인
+   * @param {object} [opts] { excludeCorrected: true } 보정 확정 라인을 일치도에서 뺄지
+   */
+  function buildSummaryRow(lines, opts) {
+    var excludeCorrected = !!(opts && opts.excludeCorrected);
+    var bookLines = 0, bookAmount = 0;
+    var actualQty = 0, actualAmount = 0;
+    var matchQty = 0, overQty = 0, shortQty = 0;
+    var matchAmt = 0, overAmt = 0, shortAmt = 0;
+
+    (lines || []).forEach(function (l) {
+      var price = Number(l.unitPrice) || 0;
+      var book = Number(l.bookQty) || 0;
+      bookLines += 1;
+      bookAmount += book * price;
+
+      if (l.actualQty === null || l.actualQty === undefined) return;
+      var act = Number(l.actualQty) || 0;
+      actualQty += act;
+      actualAmount += act * price;
+
+      // 보정이 확정된 라인은 총괄표 상단에서 빠지고 하단 보정요청 리스트로 간다.
+      // 원본 파일에서 보정 2건이 있는데도 상단 일치율이 100%였던 이유가 이것이다.
+      var corrected = String(l.correction || '').trim().toUpperCase() === 'O';
+      if (excludeCorrected && corrected) {
+        matchQty += act;
+        matchAmt += act * price;
+        return;
+      }
+
+      var diff = Number(l.diff) || 0;
+      if (diff === 0) { matchQty += act; matchAmt += act * price; }
+      else if (diff > 0) { overQty += diff; overAmt += diff * price; }
+      else { shortQty += -diff; shortAmt += -diff * price; }
+    });
+
+    function pct(part, whole) {
+      if (whole <= 0) return null;
+      return Math.round((part / whole) * 1000) / 10;
+    }
+
+    return {
+      bookLines: bookLines,
+      bookAmount: bookAmount,
+      actualQty: actualQty,
+      actualAmount: actualAmount,
+      // 실사율 = 실사한 라인 ÷ 전체 라인
+      auditRate: pct((lines || []).filter(function (l) {
+        return l.actualQty !== null && l.actualQty !== undefined;
+      }).length, bookLines),
+      matchQty: matchQty, overQty: overQty, shortQty: shortQty,
+      qtyMatchRate: pct(matchQty, actualQty),
+      matchAmount: matchAmt, overAmount: overAmt, shortAmount: shortAmt,
+      netAmount: overAmt - shortAmt,
+      amountMatchRate: pct(matchAmt, actualAmount)
+    };
+  }
+
+  /** 총괄표 상단 전체 — 업체별 행 + 합계 행. */
+  function buildSummaryTable(vendors, audits, auditLines, round, opts) {
+    var rows = (vendors || []).map(function (v) {
+      var audit = (audits || []).find(function (a) {
+        return normalizeBizNo(a.bizNo) === normalizeBizNo(v.bizNo) &&
+          a.round === round && a.status !== AUDIT_STATUS.DRAFT;
+      });
+      var lines = audit
+        ? (auditLines || []).filter(function (l) { return l.auditId === audit.id; })
+        : [];
+      var s = buildSummaryRow(lines, opts);
+      s.bizNo = v.bizNo;
+      s.vendorCode = v.vendorCode || '';
+      s.vendorName = v.name;
+      s.submitted = !!audit;
+      s.status = vendorSubmissionStatus(audits, auditLines, v.bizNo, round);
+      return s;
+    });
+
+    var all = [];
+    rows.forEach(function (r) { all.push(r); });
+    var totalLines = [];
+    (vendors || []).forEach(function (v) {
+      var audit = (audits || []).find(function (a) {
+        return normalizeBizNo(a.bizNo) === normalizeBizNo(v.bizNo) &&
+          a.round === round && a.status !== AUDIT_STATUS.DRAFT;
+      });
+      if (audit) {
+        (auditLines || []).forEach(function (l) { if (l.auditId === audit.id) totalLines.push(l); });
+      }
+    });
+    var total = buildSummaryRow(totalLines, opts);
+    total.vendorName = '합계';
+
+    return { rows: all, total: total };
+  }
+
+  /**
+   * 관리자가 결과 추출 전에 확인해야 하는 3가지를 한 번에 점검한다.
+   * 요청 원문: "결과확인서 누락 없는지, 재고보정 대상은 없는지, 불일치는 없는지"
+   */
+  function buildPreflight(vendors, audits, auditLines, attachments, round) {
+    var missingCert = [];
+    var pendingCorrection = [];
+    var mismatch = [];
+    var notSubmitted = [];
+
+    (vendors || []).forEach(function (v) {
+      var status = vendorSubmissionStatus(audits, auditLines, v.bizNo, round);
+      if (status === '미제출') { notSubmitted.push(v.name); return; }
+
+      var audit = (audits || []).find(function (a) {
+        return normalizeBizNo(a.bizNo) === normalizeBizNo(v.bizNo) &&
+          a.round === round && a.status !== AUDIT_STATUS.DRAFT;
+      });
+      if (!audit) return;
+
+      var hasCert = (attachments || []).some(function (t) { return t.auditId === audit.id; });
+      if (!hasCert) missingCert.push(v.name);
+
+      (auditLines || []).filter(function (l) { return l.auditId === audit.id; })
+        .forEach(function (l) {
+          if (!isCorrectionCandidate(l)) return;
+          mismatch.push({ vendorName: v.name, itemName: l.itemName, diff: l.diff });
+          // 불일치인데 보정 O/X 판단이 아직 안 된 라인
+          if (!String(l.correction || '').trim()) {
+            pendingCorrection.push({ vendorName: v.name, itemName: l.itemName, diff: l.diff });
+          }
+        });
+    });
+
+    return {
+      notSubmitted: notSubmitted,
+      missingCert: missingCert,
+      mismatch: mismatch,
+      pendingCorrection: pendingCorrection,
+      ready: notSubmitted.length === 0 && missingCert.length === 0 && pendingCorrection.length === 0
+    };
+  }
+
+  // ---------------------------------------------------------------
   // 포맷 유틸
   // ---------------------------------------------------------------
 
@@ -394,6 +702,19 @@
     computeMatchRates: computeMatchRates,
     vendorSubmissionStatus: vendorSubmissionStatus,
     buildDashboard: buildDashboard,
+    // 2026-08-24 보완 — 마감·지각
+    computeOverdue: computeOverdue,
+    allSubmitted: allSubmitted,
+    // 2026-08-24 보완 — 재고보정
+    FAULT: FAULT,
+    ACTION_CORRECTION: ACTION_CORRECTION,
+    isCorrectionCandidate: isCorrectionCandidate,
+    correctionAmount: correctionAmount,
+    buildCorrectionList: buildCorrectionList,
+    // 2026-08-24 보완 — 총괄표
+    buildSummaryRow: buildSummaryRow,
+    buildSummaryTable: buildSummaryTable,
+    buildPreflight: buildPreflight,
     formatNumber: formatNumber,
     formatBizNo: formatBizNo
   };

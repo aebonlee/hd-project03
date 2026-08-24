@@ -7,19 +7,36 @@
 (function (global) {
   'use strict';
 
-  var STORAGE_KEY = 'hd_rental_audit_db_v1';
+  // 스키마가 바뀌면 키를 올린다. v1 그대로 두면 옛 브라우저에 남은 데이터에
+  // 회차계획·재고보정 필드가 없어 화면이 조용히 비어 보인다.
+  var STORAGE_KEY = 'hd_rental_audit_db_v2';
   var CURRENT_ROUND = '2026-08'; // 이번 실사 회차
+
+  /**
+   * 회차 계획 — 관리자가 여는 실사 한 회차의 기준.
+   *  - bookUpdatedAt : 전월 마감 기준 전산재고를 올린 시각
+   *  - dueDate       : 등록 마감일 (이 날까지)
+   *  - requestedAt   : 업체들에게 등록요청을 보낸 시각
+   */
+  var SEED_ROUND_PLAN = {
+    round: CURRENT_ROUND,
+    bookBase: '2026-07',          // 전산재고의 기준이 되는 마감월
+    bookUpdatedAt: '2026-08-01T09:00:00',
+    dueDate: '2026-08-13',
+    requestedAt: '2026-08-01T09:10:00',
+    completedNotifiedAt: null
+  };
 
   // ---------------------------------------------------------------
   // 시드 데이터
   // ---------------------------------------------------------------
 
   var SEED_VENDORS = [
-    { bizNo: '1234567890', name: '대한테크', manager: '김민준', phone: '010-2345-1111', email: 'minjun.kim@daehantech.example.com', password: '1234' },
-    { bizNo: '2345678901', name: '한빛물류', manager: '이서연', phone: '010-3456-2222', email: 'seoyeon.lee@hanbit.example.com', password: '1234' },
-    { bizNo: '3456789012', name: '서울정공', manager: '박도윤', phone: '010-4567-3333', email: 'doyun.park@seouljg.example.com', password: '1234' },
-    { bizNo: '4567890123', name: '미래산업', manager: '최지우', phone: '010-5678-4444', email: 'jiwoo.choi@mirae.example.com', password: '1234' },
-    { bizNo: '5678901234', name: '청우전자', manager: '정하은', phone: '010-6789-5555', email: 'haeun.jung@chungwoo.example.com', password: '1234' }
+    { bizNo: '1234567890', vendorCode: '10000949', name: '대한테크', manager: '김민준', phone: '010-2345-1111', email: 'minjun.kim@daehantech.example.com', password: '1234' },
+    { bizNo: '2345678901', vendorCode: '10001391', name: '한빛물류', manager: '이서연', phone: '010-3456-2222', email: 'seoyeon.lee@hanbit.example.com', password: '1234' },
+    { bizNo: '3456789012', vendorCode: '10002204', name: '서울정공', manager: '박도윤', phone: '010-4567-3333', email: 'doyun.park@seouljg.example.com', password: '1234' },
+    { bizNo: '4567890123', vendorCode: '10003117', name: '미래산업', manager: '최지우', phone: '010-5678-4444', email: 'jiwoo.choi@mirae.example.com', password: '1234' },
+    { bizNo: '5678901234', vendorCode: '10004825', name: '청우전자', manager: '정하은', phone: '010-6789-5555', email: 'haeun.jung@chungwoo.example.com', password: '1234' }
   ];
 
   // 업체별 대여 아이템 (아이템명, 규격, 장부수량, 단가, 대여일)
@@ -105,12 +122,25 @@
    *  - 미래산업: 승인 완료
    *  - 청우전자: 미제출
    */
+  /**
+   * 품번 생성 — 보고 양식(총괄표·전체재고)이 품번을 기준으로 행을 식별한다.
+   * 데모라 실제 품번 체계는 쓰지 않고, 사업자번호와 순번에서 결정적으로 만든다.
+   * 형식은 실제 양식과 같은 `NNNNNN-NNNNNX`.
+   */
+  function makePartNo(bizNo, idx) {
+    var head = String(400000 + Number(bizNo.slice(0, 3)) * 7 + idx * 13).slice(0, 6);
+    var tail = String(10 + idx * 37).padStart(5, '0');
+    var suffix = 'ABCDEFGH'.charAt(idx % 8);
+    return head + '-' + tail + suffix;
+  }
+
   function buildSeed() {
     var items = [];
     Object.keys(SEED_ITEMS_BY_VENDOR).forEach(function (bizNo) {
       SEED_ITEMS_BY_VENDOR[bizNo].forEach(function (row, idx) {
         items.push({
           id: 'IT-' + bizNo.slice(0, 3) + '-' + String(idx + 1).padStart(3, '0'),
+          partNo: makePartNo(bizNo, idx),
           bizNo: bizNo,
           name: row[0],
           spec: row[1],
@@ -143,6 +173,7 @@
         auditLines.push({
           auditId: auditId,
           itemId: item.id,
+          partNo: item.partNo,
           itemName: item.name,
           spec: item.spec,
           bizNo: bizNo,
@@ -154,7 +185,13 @@
           amountDiff: diff * item.unitPrice,
           reason: ov.reason || '',
           deleteRequested: deleteRequested,
-          deleteStatus: deleteRequested ? (ov.deleteStatus || '대기') : null
+          deleteStatus: deleteRequested ? (ov.deleteStatus || '대기') : null,
+          // ---- 재고보정 (총괄표 하단 "보정요청 리스트"로 가는 값) ----
+          // 담당자가 검토 화면에서 확정한다. 빈 문자열 = 아직 판단 안 함.
+          correction: ov.correction || '',            // 'O' | 'X' | ''
+          fault: ov.fault || '',                      // 'HCE' | '협력업체'
+          action: ov.action || '',                    // 조치사항 코드 (Z05)
+          correctionAmount: ov.correction === 'O' ? diff * item.unitPrice : 0
         });
         if (deleteRequested && (ov.deleteStatus === '승인')) item.status = '종료';
         else if (deleteRequested) item.status = '종료요청';
@@ -167,18 +204,25 @@
     attachments.push({ auditId: au1, fileName: '한빛물류_실사확인서_2026-08.pdf', size: 482133, type: 'application/pdf', preview: null });
     notifications.push({ id: 'NT-001', to: 'hd-manager@hd.example.com', channel: '이메일', message: '[실사 제출] 한빛물류(234-56-78901)가 2026-08 실사 결과를 제출했습니다. (불일치 0건)', sentAt: '2026-08-12T10:24:05' });
 
-    // 서울정공 — 불일치 2건 + 삭제 요청 1건
+    // 서울정공 — 불일치 2건 + 삭제 요청 1건. 마감(08-13) 다음 날 제출이라 "지각 제출" 사례.
+    // 불일치 2건 중 1건만 재고보정 확정, 1건은 판단 대기 → 결과 추출 전 점검 화면 데모.
     var au2 = seedAudit('3456789012', '제출', '2026-08-14T16:41:00', {
-      '버니어 캘리퍼스': { actualQty: 10, reason: '파손 2개 확인 — 폐기 처리 예정, 사진 확인서 첨부' },
+      '버니어 캘리퍼스': {
+        actualQty: 10, reason: '자가불량 (파손 2개) — 폐기 처리 예정, 사진 확인서 첨부',
+        correction: 'O', fault: '협력업체', action: 'Z05'
+      },
       '엔드밀 세트': { actualQty: 18, reason: '마모 한도 초과 2세트 자체 폐기(승인 대기)' },
       '보루 압축팩': { deleteRequested: true, reason: '소모품 전량 사용 완료 — 대여 종료 요청' }
     });
     attachments.push({ auditId: au2, fileName: '서울정공_재고실사확인서.pdf', size: 1204567, type: 'application/pdf', preview: null });
     notifications.push({ id: 'NT-002', to: 'hd-manager@hd.example.com', channel: '이메일', message: '[실사 제출] 서울정공(345-67-89012)이 2026-08 실사 결과를 제출했습니다. (불일치 2건, 삭제 요청 1건)', sentAt: '2026-08-14T16:41:04' });
 
-    // 미래산업 — 불일치 1건 소명 후 승인 완료
+    // 미래산업 — 불일치 1건 소명 후 재고보정 확정, 승인 완료
     var au3 = seedAudit('4567890123', '승인', '2026-08-08T09:12:00', {
-      '타워 클램프': { actualQty: 78, reason: '현장 반출 중 분실 2개 — 변상 처리 협의 중' }
+      '타워 클램프': {
+        actualQty: 78, reason: '현장 반출 중 분실 2개 — 변상 처리 협의 중',
+        correction: 'O', fault: 'HCE', action: 'Z05'
+      }
     });
     attachments.push({ auditId: au3, fileName: '미래산업_실사결과_202608.jpg', size: 2381190, type: 'image/jpeg', preview: null });
     notifications.push({ id: 'NT-003', to: 'hd-manager@hd.example.com', channel: '이메일', message: '[실사 제출] 미래산업(456-78-90123)이 2026-08 실사 결과를 제출했습니다. (불일치 1건)', sentAt: '2026-08-08T09:12:03' });
@@ -186,6 +230,7 @@
 
     return {
       round: CURRENT_ROUND,
+      roundPlan: Object.assign({}, SEED_ROUND_PLAN),
       vendors: SEED_VENDORS.map(function (v) { return Object.assign({}, v); }),
       items: items,
       audits: audits,
@@ -232,6 +277,85 @@
       localStorage.removeItem(STORAGE_KEY);
       this._db = null;
       return this.load();
+    },
+
+    // ---------------------------------------------------------------
+    // 회차 계획 (2026-08-24 보완)
+    // ---------------------------------------------------------------
+
+    /** 현재 회차 계획. 옛 데이터에 없으면 기본값을 만들어 준다. */
+    roundPlan: function () {
+      var db = this.load();
+      if (!db.roundPlan) {
+        db.roundPlan = Object.assign({}, SEED_ROUND_PLAN);
+        this.save();
+      }
+      return db.roundPlan;
+    },
+
+    /** 회차 계획 갱신 (마감일·전산재고 기준월·요청 발송 시각 등) */
+    setRoundPlan: function (patch) {
+      var plan = this.roundPlan();
+      Object.keys(patch || {}).forEach(function (k) { plan[k] = patch[k]; });
+      this.save();
+      return plan;
+    },
+
+    /**
+     * 전월 마감 기준 전산재고를 갱신한다.
+     *
+     * 이미 제출한 업체의 장부수량까지 바꾸면 그 업체가 낸 실사 결과의 근거가
+     * 사라진다. 그래서 **아직 제출하지 않은 업체만** 갱신하고, 제외된 업체를
+     * 돌려줘 담당자가 알 수 있게 한다.
+     *
+     * @param {Array} rows  [{ partNo | itemId, qty, unitPrice? }]
+     * @param {Array} lockedBizNos  이미 제출해 건드리면 안 되는 업체
+     * @returns {{updated:number, skippedLocked:number, notFound:Array}}
+     */
+    updateBookStock: function (rows, lockedBizNos) {
+      var db = this.load();
+      var locked = {};
+      (lockedBizNos || []).forEach(function (b) { locked[String(b).replace(/\D/g, '')] = true; });
+
+      var updated = 0, skippedLocked = 0;
+      var notFound = [];
+
+      (rows || []).forEach(function (r) {
+        var item = db.items.find(function (i) {
+          return (r.itemId && i.id === r.itemId) || (r.partNo && i.partNo === r.partNo);
+        });
+        if (!item) { notFound.push(r.partNo || r.itemId); return; }
+        if (locked[String(item.bizNo).replace(/\D/g, '')]) { skippedLocked++; return; }
+
+        var qty = Number(r.qty);
+        if (!isFinite(qty) || qty < 0) { notFound.push(r.partNo || r.itemId); return; }
+        item.qty = qty;
+        if (r.unitPrice !== undefined && r.unitPrice !== null && isFinite(Number(r.unitPrice))) {
+          item.unitPrice = Number(r.unitPrice);
+        }
+        item.amount = item.qty * item.unitPrice;
+        updated++;
+      });
+
+      this.save();
+      return { updated: updated, skippedLocked: skippedLocked, notFound: notFound };
+    },
+
+    /** 실사 라인의 재고보정 확정값 저장 */
+    setCorrection: function (auditId, itemId, patch) {
+      var db = this.load();
+      var line = db.auditLines.find(function (l) {
+        return l.auditId === auditId && l.itemId === itemId;
+      });
+      if (!line) return null;
+      if (patch.correction !== undefined) line.correction = patch.correction;
+      if (patch.fault !== undefined) line.fault = patch.fault;
+      if (patch.action !== undefined) line.action = patch.action;
+      line.correctionAmount = String(line.correction || '').toUpperCase() === 'O'
+        ? (Number(line.diff) || 0) * (Number(line.unitPrice) || 0)
+        : 0;
+      this.save();
+      return line;
     },
 
     /** 알림 로그 기록 (이메일 어댑터 대체 — README 참조) */

@@ -273,4 +273,277 @@ test('천 단위 구분 포맷', function () {
   assert.strictEqual(Logic.formatNumber(null), '-');
 });
 
+
+// ===================================================================
+// 2026-08-24 보완 — 마감·지각 / 재고보정 / 총괄표
+// ===================================================================
+
+console.log('\n[12] 등록 마감과 지각 판정');
+test('마감일이 없으면 지각을 따지지 않는다', function () {
+  var r = Logic.computeOverdue(null, '2026-08-24', false);
+  assert.strictEqual(r.state, '마감없음');
+  assert.strictEqual(r.days, 0);
+});
+test('마감 전이면 남은 일수를 준다', function () {
+  var r = Logic.computeOverdue('2026-08-13', '2026-08-05', false);
+  assert.strictEqual(r.state, '여유');
+  assert.strictEqual(r.days, 8);
+});
+test('마감 3일 이내면 임박으로 구분한다', function () {
+  assert.strictEqual(Logic.computeOverdue('2026-08-13', '2026-08-11', false).state, '임박');
+  assert.strictEqual(Logic.computeOverdue('2026-08-13', '2026-08-13', false).state, '임박');
+});
+test('마감 당일은 아직 지각이 아니다', function () {
+  var r = Logic.computeOverdue('2026-08-13', '2026-08-13', false);
+  assert.strictEqual(r.state, '임박');
+  assert.strictEqual(r.days, 0);
+});
+test('마감 다음 날부터 1일 지각', function () {
+  var r = Logic.computeOverdue('2026-08-13', '2026-08-14', false);
+  assert.strictEqual(r.state, '지각');
+  assert.strictEqual(r.days, 1);
+});
+test('지각일수는 시각이 아니라 날짜 차이로 센다', function () {
+  // 같은 날이면 0시 1분이든 23시 59분이든 똑같이 1일 지각이어야 한다
+  var early = Logic.computeOverdue('2026-08-13', '2026-08-14T00:01:00', false);
+  var late  = Logic.computeOverdue('2026-08-13', '2026-08-14T23:59:00', false);
+  assert.strictEqual(early.days, 1);
+  assert.strictEqual(late.days, 1);
+});
+test('11일 지각도 정확히 센다', function () {
+  assert.strictEqual(Logic.computeOverdue('2026-08-13', '2026-08-24', false).days, 11);
+});
+test('기한 내 제출은 지각이 아니다', function () {
+  var r = Logic.computeOverdue('2026-08-13', '2026-08-24', true, '2026-08-12T10:24:00');
+  assert.strictEqual(r.state, '기한내제출');
+  assert.strictEqual(r.days, 0);
+});
+test('마감 뒤 제출은 지각 제출로 남는다', function () {
+  // 이미 냈어도 며칠 늦었는지는 기록으로 남아야 한다
+  var r = Logic.computeOverdue('2026-08-13', '2026-08-24', true, '2026-08-14T16:41:00');
+  assert.strictEqual(r.state, '지각제출');
+  assert.strictEqual(r.days, 1);
+});
+test('제출 시각이 없는 옛 데이터를 지각으로 몰지 않는다', function () {
+  var r = Logic.computeOverdue('2026-08-13', '2026-08-24', true, null);
+  assert.strictEqual(r.state, '기한내제출');
+});
+test('잘못된 마감일은 마감없음으로 처리한다', function () {
+  assert.strictEqual(Logic.computeOverdue('없음', '2026-08-24', false).state, '마감없음');
+});
+
+console.log('\n[13] 전원 등록 완료 판정');
+var vAll = [{ bizNo: '1111111111', name: 'A' }, { bizNo: '2222222222', name: 'B' }];
+test('한 곳이라도 미제출이면 완료가 아니다', function () {
+  var audits = [{ id: 'X1', bizNo: '1111111111', round: 'R', status: '제출' }];
+  assert.strictEqual(Logic.allSubmitted(vAll, audits, [], 'R'), false);
+});
+test('전 업체가 제출하면 완료다', function () {
+  var audits = [
+    { id: 'X1', bizNo: '1111111111', round: 'R', status: '제출' },
+    { id: 'X2', bizNo: '2222222222', round: 'R', status: '승인' }
+  ];
+  assert.strictEqual(Logic.allSubmitted(vAll, audits, [], 'R'), true);
+});
+test('작성중은 제출로 치지 않는다', function () {
+  var audits = [
+    { id: 'X1', bizNo: '1111111111', round: 'R', status: '제출' },
+    { id: 'X2', bizNo: '2222222222', round: 'R', status: '작성중' }
+  ];
+  assert.strictEqual(Logic.allSubmitted(vAll, audits, [], 'R'), false);
+});
+test('다른 회차의 제출은 이번 회차 완료로 치지 않는다', function () {
+  var audits = [
+    { id: 'X1', bizNo: '1111111111', round: 'R', status: '제출' },
+    { id: 'X2', bizNo: '2222222222', round: '이전회차', status: '제출' }
+  ];
+  assert.strictEqual(Logic.allSubmitted(vAll, audits, [], 'R'), false);
+});
+test('업체가 하나도 없으면 완료가 아니다', function () {
+  assert.strictEqual(Logic.allSubmitted([], [], [], 'R'), false);
+});
+
+console.log('\n[14] 재고보정 판정');
+test('차이가 있으면 보정 대상 후보다', function () {
+  assert.strictEqual(Logic.isCorrectionCandidate({ diff: -1, unitPrice: 100 }), true);
+  assert.strictEqual(Logic.isCorrectionCandidate({ diff: 3, unitPrice: 100 }), true);
+});
+test('차이가 0이면 보정 대상이 아니다', function () {
+  assert.strictEqual(Logic.isCorrectionCandidate({ diff: 0, unitPrice: 100 }), false);
+});
+test('실사 미입력 라인은 보정 대상이 아니다', function () {
+  assert.strictEqual(Logic.isCorrectionCandidate({ diff: null, unitPrice: 100 }), false);
+});
+test('삭제(대여 종료) 요청은 보정이 아니라 별도 승인 흐름이다', function () {
+  assert.strictEqual(Logic.isCorrectionCandidate({ diff: -5, unitPrice: 100, deleteRequested: true }), false);
+});
+test('보정금액 = 차이 x 단가, 부족이면 음수', function () {
+  assert.strictEqual(Logic.correctionAmount({ diff: -1, unitPrice: 69966 }), -69966);
+  assert.strictEqual(Logic.correctionAmount({ diff: 2, unitPrice: 4500 }), 9000);
+  assert.strictEqual(Logic.correctionAmount({ diff: 0, unitPrice: 4500 }), 0);
+});
+
+console.log('\n[15] 보정요청 리스트 (총괄표 하단)');
+var corrVendors = [
+  { bizNo: '1111111111', name: '한양정밀' },
+  { bizNo: '2222222222', name: '선진정공' }
+];
+var corrLines = [
+  { bizNo: '1111111111', partNo: '410102-00052E', itemName: 'VALVE,BRAKE SUPPLY',
+    diff: -1, unitPrice: 69966, correction: 'O', fault: 'HCE', action: 'Z05', reason: '자가불량 (나사선 마모)' },
+  { bizNo: '2222222222', partNo: '421-00021A', itemName: 'VALVE,HYDRAULIC',
+    diff: -1, unitPrice: 10918, correction: 'O', fault: '협력업체', action: 'Z05', reason: '자가불량 (파손)' },
+  // 보정 O가 아닌 것은 리스트에 들어가면 안 된다
+  { bizNo: '1111111111', partNo: '999-00001A', itemName: '판단대기품목',
+    diff: -3, unitPrice: 1000, correction: '', reason: '검토중' },
+  { bizNo: '1111111111', partNo: '999-00002A', itemName: '보정불필요품목',
+    diff: -2, unitPrice: 1000, correction: 'X', reason: '현장 재확인 결과 일치' }
+];
+test('보정 O 표시가 있는 건만 별도로 취합된다', function () {
+  var r = Logic.buildCorrectionList(corrVendors, corrLines);
+  assert.strictEqual(r.rows.length, 2);
+  assert.deepStrictEqual(r.rows.map(function (x) { return x.partNo; }),
+    ['410102-00052E', '421-00021A']);
+});
+test('보정 판단이 안 됐거나 X인 건은 빠진다', function () {
+  var r = Logic.buildCorrectionList(corrVendors, corrLines);
+  var names = r.rows.map(function (x) { return x.itemName; });
+  assert.ok(names.indexOf('판단대기품목') < 0);
+  assert.ok(names.indexOf('보정불필요품목') < 0);
+});
+test('실제 총괄표의 보정금액과 일치한다', function () {
+  var r = Logic.buildCorrectionList(corrVendors, corrLines);
+  assert.strictEqual(r.rows[0].correctionAmount, -69966);
+  assert.strictEqual(r.rows[1].correctionAmount, -10918);
+  assert.strictEqual(r.totalAmount, -80884);
+  assert.strictEqual(r.totalQty, -2);
+});
+test('업체별 소계가 붙는다', function () {
+  var r = Logic.buildCorrectionList(corrVendors, corrLines);
+  assert.strictEqual(r.subtotals.length, 2);
+  assert.strictEqual(r.subtotals[0].vendorName, '한양정밀 소계');
+  assert.strictEqual(r.subtotals[0].correctionAmount, -69966);
+});
+test('귀책과 조치사항이 그대로 실린다', function () {
+  var r = Logic.buildCorrectionList(corrVendors, corrLines);
+  assert.strictEqual(r.rows[0].fault, 'HCE');
+  assert.strictEqual(r.rows[1].fault, '협력업체');
+  assert.strictEqual(r.rows[0].action, 'Z05');
+});
+test('보정 건이 없으면 빈 리스트다', function () {
+  var r = Logic.buildCorrectionList(corrVendors, []);
+  assert.strictEqual(r.rows.length, 0);
+  assert.strictEqual(r.totalAmount, 0);
+});
+
+console.log('\n[16] 총괄표 상단 집계');
+var sumLines = [
+  { bookQty: 10, actualQty: 10, diff: 0, unitPrice: 1000 },
+  { bookQty: 5,  actualQty: 5,  diff: 0, unitPrice: 2000 },
+  { bookQty: 8,  actualQty: 6,  diff: -2, unitPrice: 500 },   // 부족 2
+  { bookQty: 4,  actualQty: 7,  diff: 3,  unitPrice: 100 }    // 과잉 3
+];
+test('실사대상 수량은 실물재고 합이다', function () {
+  var s = Logic.buildSummaryRow(sumLines);
+  assert.strictEqual(s.actualQty, 10 + 5 + 6 + 7);
+  assert.strictEqual(s.actualAmount, 10 * 1000 + 5 * 2000 + 6 * 500 + 7 * 100);
+});
+test('전월 마감 재고는 라인 수와 장부금액이다', function () {
+  var s = Logic.buildSummaryRow(sumLines);
+  assert.strictEqual(s.bookLines, 4);
+  assert.strictEqual(s.bookAmount, 10 * 1000 + 5 * 2000 + 8 * 500 + 4 * 100);
+});
+test('과잉과 부족을 나눠 센다', function () {
+  var s = Logic.buildSummaryRow(sumLines);
+  assert.strictEqual(s.overQty, 3);
+  assert.strictEqual(s.shortQty, 2);
+  assert.strictEqual(s.matchQty, 15);
+});
+test('금액 NET = 과잉금액 - 부족금액', function () {
+  var s = Logic.buildSummaryRow(sumLines);
+  assert.strictEqual(s.overAmount, 300);
+  assert.strictEqual(s.shortAmount, 1000);
+  assert.strictEqual(s.netAmount, -700);
+});
+test('전량 일치면 일치율 100%', function () {
+  var s = Logic.buildSummaryRow([{ bookQty: 5, actualQty: 5, diff: 0, unitPrice: 100 }]);
+  assert.strictEqual(s.qtyMatchRate, 100);
+  assert.strictEqual(s.amountMatchRate, 100);
+});
+test('보정 확정 라인은 상단 일치도에서 빠진다', function () {
+  // 원본 총괄표에서 보정 2건이 있는데도 상단 일치율이 100%였던 구조
+  var lines = [
+    { bookQty: 25, actualQty: 24, diff: -1, unitPrice: 69966, correction: 'O' }
+  ];
+  var withOpt = Logic.buildSummaryRow(lines, { excludeCorrected: true });
+  assert.strictEqual(withOpt.qtyMatchRate, 100);
+  assert.strictEqual(withOpt.shortQty, 0);
+
+  var without = Logic.buildSummaryRow(lines);
+  assert.strictEqual(without.shortQty, 1);
+  assert.ok(without.qtyMatchRate < 100);
+});
+test('실사 미입력 라인은 실사율에 반영된다', function () {
+  var s = Logic.buildSummaryRow([
+    { bookQty: 5, actualQty: 5, diff: 0, unitPrice: 100 },
+    { bookQty: 5, actualQty: null, diff: null, unitPrice: 100 }
+  ]);
+  assert.strictEqual(s.auditRate, 50);
+});
+test('라인이 없으면 비율은 null이다', function () {
+  var s = Logic.buildSummaryRow([]);
+  assert.strictEqual(s.qtyMatchRate, null);
+  assert.strictEqual(s.auditRate, null);
+});
+
+console.log('\n[17] 결과 추출 전 점검');
+var pfVendors = [
+  { bizNo: '1111111111', name: '제출완료업체' },
+  { bizNo: '2222222222', name: '확인서누락업체' },
+  { bizNo: '3333333333', name: '미제출업체' }
+];
+var pfAudits = [
+  { id: 'P1', bizNo: '1111111111', round: 'R', status: '제출' },
+  { id: 'P2', bizNo: '2222222222', round: 'R', status: '제출' }
+];
+var pfLines = [
+  { auditId: 'P1', bizNo: '1111111111', itemName: '정상품', diff: 0, unitPrice: 100 },
+  { auditId: 'P2', bizNo: '2222222222', itemName: '판단대기품', diff: -1, unitPrice: 100, correction: '' }
+];
+var pfAtt = [{ auditId: 'P1', fileName: 'a.pdf' }];
+test('미제출 업체를 짚어 준다', function () {
+  var r = Logic.buildPreflight(pfVendors, pfAudits, pfLines, pfAtt, 'R');
+  assert.deepStrictEqual(r.notSubmitted, ['미제출업체']);
+});
+test('결과확인서가 없는 업체를 짚어 준다', function () {
+  var r = Logic.buildPreflight(pfVendors, pfAudits, pfLines, pfAtt, 'R');
+  assert.deepStrictEqual(r.missingCert, ['확인서누락업체']);
+});
+test('보정 판단이 남은 불일치를 짚어 준다', function () {
+  var r = Logic.buildPreflight(pfVendors, pfAudits, pfLines, pfAtt, 'R');
+  assert.strictEqual(r.pendingCorrection.length, 1);
+  assert.strictEqual(r.pendingCorrection[0].itemName, '판단대기품');
+});
+test('셋 다 없어야 결과 추출 준비 완료다', function () {
+  var r = Logic.buildPreflight(pfVendors, pfAudits, pfLines, pfAtt, 'R');
+  assert.strictEqual(r.ready, false);
+
+  var clean = Logic.buildPreflight(
+    [{ bizNo: '1111111111', name: '제출완료업체' }],
+    [{ id: 'P1', bizNo: '1111111111', round: 'R', status: '제출' }],
+    [{ auditId: 'P1', bizNo: '1111111111', itemName: '정상품', diff: 0, unitPrice: 100 }],
+    [{ auditId: 'P1', fileName: 'a.pdf' }], 'R');
+  assert.strictEqual(clean.ready, true);
+});
+test('보정 판단이 끝난 불일치는 준비 완료를 막지 않는다', function () {
+  var r = Logic.buildPreflight(
+    [{ bizNo: '1111111111', name: 'A' }],
+    [{ id: 'P1', bizNo: '1111111111', round: 'R', status: '제출' }],
+    [{ auditId: 'P1', bizNo: '1111111111', itemName: '보정확정품', diff: -1, unitPrice: 100, correction: 'O' }],
+    [{ auditId: 'P1', fileName: 'a.pdf' }], 'R');
+  assert.strictEqual(r.pendingCorrection.length, 0);
+  assert.strictEqual(r.mismatch.length, 1);   // 불일치 자체는 보고된다
+  assert.strictEqual(r.ready, true);
+});
+
 console.log('\n총 ' + passed + '개 테스트 통과\n');

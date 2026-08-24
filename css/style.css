@@ -313,3 +313,103 @@ tr.row-delete td { background: var(--danger-bg); }
   .view { display: none; }
   #view-report { display: block; }
 }
+
+/* ===================================================================
+   2026-08-24 보완 — 등록 마감 헤드라인 / 재고보정
+   =================================================================== */
+
+/* 업체 화면 최상단 띠.
+   요청 원문: "빨간 헤드라인(혹은 노란 헤드라인에 빨간색 글씨)으로 지각일수 표시" */
+.due-banner {
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  font-size: 15px;
+  line-height: 1.55;
+  border: 1px solid transparent;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+.due-banner strong { font-weight: 800; }
+.due-banner .days {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+/* 지각 — 노란 바탕에 빨간 글씨 */
+.due-banner.is-late {
+  background: #fff4cc;
+  border-color: #e6b800;
+  color: #b3000f;
+}
+/* 많이 늦으면 빨간 바탕으로 한 단계 올린다 */
+.due-banner.is-late-hard {
+  background: #b3000f;
+  border-color: #8a000c;
+  color: #ffffff;
+}
+.due-banner.is-late-hard .days { color: #ffe066; }
+
+.due-banner.is-soon { background: #fff4cc; border-color: #e6b800; color: #6b4700; }
+.due-banner.is-ok   { background: #e8f4ff; border-color: #b5d9f5; color: #17395c; }
+.due-banner.is-done { background: #e6f5ec; border-color: #b7e0c8; color: #14663c; }
+/* 늦게 냈어도 사실은 남긴다 — 다음 회차 독려의 근거가 된다 */
+.due-banner.is-done-late { background: #fdf3e0; border-color: #f0dcb4; color: #8a4b00; }
+
+/* 회차 관리 폼 */
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  margin: 14px 0 10px;
+}
+.form-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: #55636f;
+}
+.form-row input[type="date"],
+.form-row input[type="month"] {
+  font: inherit;
+  padding: 7px 10px;
+  border: 1px solid #dfe5ea;
+  border-radius: 6px;
+  background: #fff;
+}
+.file-label input[type="file"] { display: none; }
+.file-label .btn { display: inline-block; }
+
+/* 재고보정 확정 칸 */
+.corr-cell { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.corr-cell select {
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 7px;
+  border: 1px solid #dfe5ea;
+  border-radius: 5px;
+  background: #fff;
+}
+.corr-cell select.is-set { border-color: #0a7d8c; background: #e3f3f5; }
+.corr-cell select.is-pending { border-color: #c0392b; background: #fdecea; }
+
+.pf-line { margin: 0 0 8px; font-size: 14px; }
+.pf-line .ok   { color: #14663c; font-weight: 700; }
+.pf-line .bad  { color: #b3000f; font-weight: 700; }
+.pf-ready {
+  margin-top: 12px; padding: 12px 14px; border-radius: 8px;
+  background: #e6f5ec; border: 1px solid #b7e0c8; color: #14663c; font-weight: 700;
+}
+.pf-notready {
+  margin-top: 12px; padding: 12px 14px; border-radius: 8px;
+  background: #fdf3e0; border: 1px solid #f0dcb4; color: #8a4b00;
+}
+
+@media (max-width: 640px) {
+  .form-row { flex-direction: column; align-items: stretch; }
+  .form-row label { width: 100%; }
+  .due-banner .days { font-size: 18px; }
+}

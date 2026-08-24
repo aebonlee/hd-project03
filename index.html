@@ -81,6 +81,9 @@
 
     <!-- ==================== 업체 실무자 ==================== -->
     <section id="view-vendor" class="view">
+      <!-- 등록 마감 안내 / 지각 헤드라인. 상태에 따라 app.js 가 색과 문구를 채운다. -->
+      <div id="vendor-due-banner" class="due-banner hidden"></div>
+
       <div class="page-head">
         <div>
           <h1 id="vendor-title"></h1>
@@ -141,8 +144,65 @@
 
       <div class="tab-bar">
         <button type="button" class="tab admin-tab active" data-tab="dashboard">제출 현황</button>
+        <button type="button" class="tab admin-tab" data-tab="round">회차 관리</button>
         <button type="button" class="tab admin-tab" data-tab="notifications">알림 로그</button>
         <button type="button" class="tab admin-tab" data-tab="master">기준 데이터 관리</button>
+      </div>
+
+      <!-- ================= 회차 관리 ================= -->
+      <div id="admin-round-panel" class="hidden">
+        <div class="panel">
+          <h2>① 전월 마감 기준 전산재고 업데이트</h2>
+          <p class="muted">
+            전월 마감 재고를 엑셀로 올려 각 아이템의 <strong>전산재고(장부수량)</strong>를 갱신합니다.
+            양식은 [기준 데이터 관리]의 내보내기 파일과 같습니다(품번 또는 아이템ID + 장부수량).
+            <br><strong>이미 제출한 업체는 갱신하지 않습니다.</strong>
+            그 업체가 낸 실사 결과의 근거가 사라지기 때문입니다 — 건너뛴 건수를 결과에 알려 드립니다.
+          </p>
+          <div class="form-row">
+            <label>전산재고 기준월
+              <input type="month" id="round-book-base">
+            </label>
+            <label class="file-label">
+              <input type="file" id="round-book-file" accept=".xlsx,.xls">
+              <span class="btn btn-secondary">전산재고 엑셀 올리기</span>
+            </label>
+          </div>
+          <p id="round-book-result" class="muted"></p>
+          <p id="round-book-updated" class="muted"></p>
+        </div>
+
+        <div class="panel">
+          <h2>② 등록 마감일 설정 및 요청 발송</h2>
+          <p class="muted">
+            마감일을 정하고 전 업체에 실사 결과 등록을 요청합니다.
+            마감일을 넘긴 업체는 접속했을 때 화면 상단에 <strong>지각일수가 빨갛게</strong> 표시됩니다.
+          </p>
+          <div class="form-row">
+            <label>등록 마감일
+              <input type="date" id="round-due-date">
+            </label>
+            <button type="button" id="btn-save-due" class="btn btn-secondary">마감일 저장</button>
+            <button type="button" id="btn-send-request" class="btn btn-primary">전 업체에 등록요청 발송</button>
+          </div>
+          <p id="round-request-result" class="muted"></p>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr><th>업체명</th><th>담당자</th><th>연락처</th><th>상태</th><th>마감 대비</th></tr>
+              </thead>
+              <tbody id="round-vendor-rows"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>③ 결과 추출 전 점검</h2>
+          <p class="muted">
+            결과확인서가 빠지지 않았는지, 재고보정 판단이 남지 않았는지, 불일치가 무엇인지 한 번에 봅니다.
+          </p>
+          <div id="preflight-body"></div>
+        </div>
       </div>
 
       <div id="admin-dashboard">
