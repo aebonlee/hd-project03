@@ -5,11 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HD 대여 아이템 재고 실사 포털</title>
   <link rel="stylesheet" href="css/style.css">
+<!-- 공통 디자인 시스템. 반드시 기존 CSS 뒤에 온다 —
+     특정도가 같으면 나중에 온 쪽이 이기므로 순서가 곧 우선순위다. -->
+<link rel="stylesheet" href="css/hd-theme.css">
   <!-- SheetJS: 엑셀 보고서 생성 / 기준 데이터 임포트
        (로컬 동봉 — 원본 CDN: https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js) -->
   <script src="lib/xlsx.full.min.js"></script>
 </head>
-<body>
+<body class="hd hd-app">
   <header class="topbar no-print">
     <div class="topbar-inner">
       <div class="brand">
