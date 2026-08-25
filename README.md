@@ -2,6 +2,10 @@
 
 > 🌐 **배포 페이지: [https://aebonlee.github.io/hd-project03/](https://aebonlee.github.io/hd-project03/)** · 저장소: https://github.com/aebonlee/hd-project03
 
+> 🗄️ **Supabase 를 붙이려면 → [`SUPABASE-설정.md`](SUPABASE-설정.md)**
+> 데이터베이스는 **수강생 본인 계정**에 만듭니다. 계정 만들기부터 확인까지 단계별로 적어 두었습니다.
+
+
 > 기획: 공지은 · 생성형 AI 업무자동화 전문가과정 [1차수] 프로젝트
 
 여러 협력업체가 HD로부터 대여해 간 아이템(자산)의 **재고 실사 결과를 업체가 직접 웹에서 입력하고 확인서를 업로드**하면, HD 담당자에게 알림이 가고, 담당자가 검토·승인 후 **수량·금액 일치도 중심의 보고서를 자동 생성**하는 웹 포털입니다.
