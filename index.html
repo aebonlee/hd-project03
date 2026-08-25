@@ -52,6 +52,11 @@
 
           <div id="login-hd-panel" hidden>
             <form id="form-hd-login" autocomplete="off">
+              <!-- 서버 모드에서만 쓴다. 데모 모드에서는 감춘다 — 데모에는 계정이 없다. -->
+              <div id="login-hd-email-row" hidden>
+                <label for="login-hd-email">담당자 이메일</label>
+                <input type="text" id="login-hd-email" inputmode="email" autocomplete="username">
+              </div>
               <label for="login-hd-password">담당자 비밀번호</label>
               <input type="password" id="login-hd-password" placeholder="데모: hd1234" required>
               <p id="login-hd-error" class="error" role="alert"></p>
@@ -60,7 +65,7 @@
           </div>
         </div>
 
-        <div class="login-card">
+        <div class="login-card" id="demo-accounts-card">
           <h2>데모 계정</h2>
           <p class="muted">본 데모는 브라우저 localStorage에 저장된 샘플 데이터로 동작합니다.</p>
           <div class="error-box" role="alert">
@@ -283,6 +288,11 @@
 
   <script src="js/logic.js"></script>
   <script src="js/store.js"></script>
+  <!-- 서버 연결(선택) — config.js 값이 비어 있으면 데모 모드로 그대로 돕니다.
+       설정 방법은 저장소 루트의 SUPABASE-설정.md 참고. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabase-store.js"></script>
   <script src="js/report.js"></script>
   <script src="js/app.js"></script>
 </body>

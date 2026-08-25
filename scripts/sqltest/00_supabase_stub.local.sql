@@ -38,6 +38,14 @@ grant usage on schema public to anon, authenticated, service_role;
 alter default privileges in schema public
   grant execute on functions to anon, authenticated, service_role;
 
+-- Supabase 는 **표·뷰·시퀀스에도** 기본 권한을 준다. 접근 제어는 권한이 아니라
+-- RLS 가 한다는 전제이기 때문이다. 이것을 재현하지 않으면
+-- "권한이 없어서" 막힌 것을 "정책이 막았다"고 착각하게 된다 — 반대도 마찬가지다.
+alter default privileges in schema public
+  grant all on tables to anon, authenticated, service_role;
+alter default privileges in schema public
+  grant all on sequences to anon, authenticated, service_role;
+
 create schema if not exists auth;
 
 create table if not exists auth.users (

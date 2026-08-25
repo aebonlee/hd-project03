@@ -22,6 +22,15 @@
   var HD_PASSWORD = DEMO_CONFIG.HD_PASSWORD;
   var HD_EMAIL = DEMO_CONFIG.HD_EMAIL;
 
+  /**
+   * 저장 위치.
+   *   데모 모드 : js/store.js  — 이 브라우저에만
+   *   서버 모드 : js/supabase-store.js — 업체가 각자 접속해 자기 것만 본다
+   * 화면 코드는 `Store` 하나만 보고 쓰므로 아래 한 줄만 바뀐다.
+   */
+  var Store = window.Store;
+  var SERVER = false;
+
   var state = {
     role: null,          // 'vendor' | 'hd'
     vendor: null,        // 로그인한 업체
@@ -65,6 +74,11 @@
   }
 
   function logout() {
+    // 서버 모드에서는 세션도 끊는다. 안 끊으면 새로고침만 해도 다시 들어가진다 —
+    // 공용 PC 에서 다음 사람이 앞사람의 자료를 본다.
+    if (SERVER && window.SupabaseStore) {
+      window.SupabaseStore.signOut().then(function () { location.reload(); });
+    }
     state.role = null;
     state.vendor = null;
     state.pendingFile = null;
@@ -79,6 +93,9 @@
   // ---------------------------------------------------------------
 
   function renderLogin() {
+    // 서버 모드에는 화면에 뿌릴 데모 계정이 없다. 있어서도 안 된다 —
+    // 업체 목록 자체가 남의 자료라, 로그인 전에 보여 주면 격리가 무너진다.
+    if (SERVER) return;
     var db = Store.load();
     var tbody = $('#demo-accounts');
     tbody.innerHTML = db.vendors.map(function (v) {
@@ -106,9 +123,35 @@
 
   function handleVendorLogin(e) {
     e.preventDefault();
-    var db = Store.load();
-    var vendor = Logic.authenticateVendor(db.vendors, $('#login-bizno').value, $('#login-password').value);
     var err = $('#login-vendor-error');
+    var bizNo = String($('#login-bizno').value || '').replace(/[^0-9]/g, '');
+    var pw = $('#login-password').value;
+
+    if (SERVER) {
+      // 서버 모드에서는 **DB 가 판정한다.** 화면이 업체 목록을 들고 비교하면,
+      // 그 목록 자체가 남의 자료라 격리가 무너진다.
+      err.textContent = '확인 중…';
+      window.SupabaseStore.signInVendor(bizNo, pw)
+        .then(function () { return window.SupabaseStore.boot(Store.ROUND || window.Store.ROUND); })
+        .then(function (doc) {
+          var v = doc.vendors.filter(function (x) { return x.bizNo === bizNo; })[0];
+          if (!v) {
+            err.textContent = '로그인은 되었지만 이 계정에 연결된 업체가 없습니다. '
+              + '담당자에게 vendor.auth_user_id 등록을 요청하세요.';
+            return;
+          }
+          err.textContent = '';
+          state.role = 'vendor'; state.vendor = v; state.pendingFile = null;
+          updateTopbar(); renderVendorView(); showView('view-vendor');
+        })
+        .catch(function (e2) {
+          err.textContent = '로그인하지 못했습니다 — ' + ((e2 && e2.message) || e2);
+        });
+      return;
+    }
+
+    var db = Store.load();
+    var vendor = Logic.authenticateVendor(db.vendors, $('#login-bizno').value, pw);
     if (!vendor) {
       err.textContent = '사업자번호 또는 비밀번호가 올바르지 않습니다.';
       return;
@@ -125,6 +168,30 @@
   function handleHdLogin(e) {
     e.preventDefault();
     var err = $('#login-hd-error');
+
+    if (SERVER) {
+      // 담당자는 이메일 + 비밀번호로 로그인하고, 관리자인지는 **DB 가 답한다**
+      // (hd_manager 표에 있는가). 화면이 비밀번호를 비교하면 우회된다.
+      var email = ($('#login-hd-email') && $('#login-hd-email').value) || '';
+      err.textContent = '확인 중…';
+      window.SupabaseStore.signInManager(email.trim(), $('#login-hd-password').value)
+        .then(function () { return window.SupabaseStore.boot(Store.ROUND || window.Store.ROUND); })
+        .then(function () {
+          if (window.SupabaseStore.whoami().role !== 'hd') {
+            err.textContent = '이 계정은 담당자로 등록되어 있지 않습니다. '
+              + 'hd_manager 표에 등록이 필요합니다.';
+            return;
+          }
+          err.textContent = '';
+          state.role = 'hd';
+          updateTopbar(); renderAdminView(); showView('view-admin');
+        })
+        .catch(function (e2) {
+          err.textContent = '로그인하지 못했습니다 — ' + ((e2 && e2.message) || e2);
+        });
+      return;
+    }
+
     if ($('#login-hd-password').value !== HD_PASSWORD) {
       err.textContent = '담당자 비밀번호가 올바르지 않습니다. (데모: ' + HD_PASSWORD + ')';
       return;
@@ -950,7 +1017,9 @@
   // ---------------------------------------------------------------
 
   function init() {
-    Store.load();
+    // 데모 모드는 여기서 시드를 만든다. 서버 모드는 **로그인 뒤에** 받아 오므로
+    // 지금 부르면 "먼저 로그인해야 합니다" 로 죽는다.
+    if (!SERVER) Store.load();
 
     // 로그인
     $all('.login-tab').forEach(function (b) {
@@ -1020,5 +1089,50 @@
     showView('view-login');
   }
 
-  document.addEventListener('DOMContentLoaded', init);
+  /* ═══════════════════════════ 연결 모드 ═══════════════════════════
+
+     지금 어디에 저장되는지 화면 위 띠로 늘 알린다.
+     모르고 쓰면 나중에 "입력한 게 사라졌다"가 된다.
+     ─────────────────────────────────────────────────────────────── */
+
+  function banner(kind, detail) {
+    var el = document.getElementById('hd-conn-banner');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'hd-conn-banner';
+      el.setAttribute('role', 'status');
+      document.body.insertBefore(el, document.body.firstChild);
+    }
+    var map = {
+      server: ['서버에 연결됨 — 업체는 자기 자료만 보고, 담당자는 전부 봅니다.', '#e3f4ec', '#0a6045'],
+      demo:   ['이 브라우저에만 저장됩니다 — 다른 업체·담당자에게는 보이지 않습니다.', '#fdf4e3', '#7a4f00']
+    };
+    var m = map[kind] || map.demo;
+    el.style.cssText = 'padding:8px 16px;font-size:13px;line-height:1.5;text-align:center;'
+      + 'background:' + m[1] + ';color:' + m[2] + ';border-bottom:1px solid rgba(0,0,0,.08)';
+    el.textContent = m[0] + (detail ? ' ' + detail : '');
+  }
+
+  function boot() {
+    var SS = window.SupabaseStore;
+    if (SS && SS.available()) {
+      SERVER = true;
+      Store = SS.api;
+      Store.ROUND = window.Store.ROUND;
+      SS.onNotify(function (msg) { banner('server', '(' + String(msg).split('\n')[0] + ')'); });
+      banner('server', '로그인하면 자료를 받아 옵니다.');
+      // 서버 모드에는 데모 계정이 없다 — 보여 주면 그 값으로 로그인하려다 막힌다.
+      var card = document.getElementById('demo-accounts-card');
+      if (card) card.hidden = true;
+      var row = document.getElementById('login-hd-email-row');
+      if (row) row.hidden = false;
+    } else {
+      SERVER = false;
+      Store = window.Store;
+      banner('demo');
+    }
+    init();
+  }
+
+  document.addEventListener('DOMContentLoaded', boot);
 })(window);

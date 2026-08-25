@@ -283,7 +283,18 @@ create policy manager_select on hd_manager for select using (is_hd_manager());
 --    수량 일치도(%) = (1 - Σ|실사-장부| / Σ장부수량) × 100
 --    금액 일치도(%) = (1 - Σ|금액차이| / Σ장부금액) × 100
 -- ---------------------------------------------------------------
-create or replace view report_vendor_summary as
+-- ---------------------------------------------------------------
+-- ⚠ 뷰에는 반드시 `with (security_invoker = true)` 를 붙인다.
+--
+--   붙이지 않으면 뷰는 **만든 사람(postgres)의 권한**으로 돈다.
+--   그러면 뷰를 읽을 수 있는 사람은 밑에 깔린 표의 RLS 를 통째로 지나쳐
+--   **모든 업체의 실사 결과를 보게 된다.** 표만 잠그고 뷰를 안 잠그면 헛일이다.
+--   (실제로 그랬다 — 한빛물류 계정으로 report_vendor_summary 를 읽으면
+--    대한테크의 일치도가 그대로 나왔다. tests/server.test.js 가 잡는다)
+--
+--   security_invoker 는 PostgreSQL 15 부터 있다. Supabase 는 15 이상이다.
+-- ---------------------------------------------------------------
+create or replace view report_vendor_summary with (security_invoker = true) as
 select
   a.round,
   v.biz_no,
@@ -390,7 +401,7 @@ create trigger audit_line_sync_correction
   for each row execute function sync_correction_amount();
 
 -- 총괄표 하단 「보정요청 리스트」
-create or replace view report_correction_list as
+create or replace view report_correction_list with (security_invoker = true) as
 select
   v.name        as vendor_name,
   v.biz_no,
@@ -409,7 +420,7 @@ where upper(coalesce(l.correction, '')) = 'O'
 order by v.name, coalesce(l.part_no, i.part_no);
 
 -- 결과 추출 전 점검 — 확인서 누락 / 보정 판단 대기
-create or replace view report_preflight as
+create or replace view report_preflight with (security_invoker = true) as
 select
   v.biz_no,
   v.name as vendor_name,
